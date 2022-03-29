@@ -1,13 +1,17 @@
-/* global AbortController */
 import JSONStream from 'JSONStream';
 import buildDebug from 'debug';
+import fs from 'fs';
+import got, { RequiredRetryOptions, Headers as gotHeaders } from 'got';
+import type { Agents, Options } from 'got';
 import _ from 'lodash';
 import requestDeprecated from 'request';
 import Stream, { PassThrough, Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { Headers, fetch as undiciFetch } from 'undici';
 import { URL } from 'url';
 
 import {
+  API_ERROR,
   CHARACTER_ENCODING,
   HEADERS,
   HEADER_TYPE,
@@ -20,9 +24,11 @@ import {
   validatioUtils,
 } from '@verdaccio/core';
 import { ReadTarball } from '@verdaccio/streams';
+import { Manifest } from '@verdaccio/types';
 import { Callback, Config, IReadTarball, Logger, UpLinkConf } from '@verdaccio/types';
 import { buildToken } from '@verdaccio/utils';
 
+import CustomAgents, { AgentOptionsConf } from './agent';
 import { parseInterval } from './proxy-utils';
 
 const LoggerApi = require('@verdaccio/logger');
@@ -39,7 +45,7 @@ const contentTypeAccept = `${jsonContentType};`;
 /**
  * Just a helper (`config[key] || default` doesn't work because of zeroes)
  */
-const setConfig = (config, key, def): string => {
+const setConfig = (config: UpLinkConfLocal, key: string, def): string => {
   return _.isNil(config[key]) === false ? config[key] : def;
 };
 
@@ -73,6 +79,13 @@ export interface IProxy {
   fetchTarball(url: string): IReadTarball;
   search(options: ProxySearchParams): Promise<Stream.Readable>;
   getRemoteMetadata(name: string, options: any, callback: Callback): void;
+  getRemoteMetadataNext(name: string, options: ISyncUplinksOptions): Promise<[Manifest, string]>;
+}
+
+export interface ISyncUplinksOptions extends Options {
+  uplinksLook?: boolean;
+  etag?: string;
+  remoteAddress?: string;
 }
 
 /**
@@ -91,33 +104,33 @@ class ProxyStorage implements IProxy {
   public timeout: number;
   public max_fails: number;
   public fail_timeout: number;
-  public agent_options: any;
+  public agent_options: AgentOptionsConf;
   // FIXME: upname is assigned to each instance
   // @ts-ignore
   public upname: string;
-  // FIXME: proxy can be boolean or object, something smells here
-  // @ts-ignore
-  public proxy: any;
+  public proxy: string | undefined;
+  private agent: Agents;
   // @ts-ignore
   public last_request_time: number | null;
   public strict_ssl: boolean;
+  private retry: Partial<RequiredRetryOptions> | number;
 
-  /**
-   * Constructor
-   * @param {*} config
-   * @param {*} mainConfig
-   */
-  public constructor(config: UpLinkConfLocal, mainConfig: Config) {
+  public constructor(config: UpLinkConfLocal, mainConfig: Config, agent?: Agents) {
     this.config = config;
     this.failed_requests = 0;
     this.userAgent = mainConfig.user_agent;
     this.ca = config.ca;
     this.logger = LoggerApi.logger.child({ sub: 'out' });
     this.server_id = mainConfig.server_id;
-
+    this.agent_options = setConfig(this.config, 'agent_options', {
+      keepAlive: true,
+      maxSockets: 40,
+      maxFreeSockets: 10,
+    }) as AgentOptionsConf;
     this.url = new URL(this.config.url);
-    this._setupProxy(this.url.hostname, config, mainConfig, this.url.protocol === 'https:');
-
+    const isHTTPS = this.url.protocol === 'https:';
+    this._setupProxy(this.url.hostname, config, mainConfig, isHTTPS);
+    this.agent = agent ?? this.getAgent();
     this.config.url = this.config.url.replace(/\/$/, '');
 
     if (this.config.timeout && Number(this.config.timeout) >= 1000) {
@@ -137,11 +150,16 @@ class ProxyStorage implements IProxy {
     this.max_fails = Number(setConfig(this.config, 'max_fails', 2));
     this.fail_timeout = parseInterval(setConfig(this.config, 'fail_timeout', '5m'));
     this.strict_ssl = Boolean(setConfig(this.config, 'strict_ssl', true));
-    this.agent_options = setConfig(this.config, 'agent_options', {
-      keepAlive: true,
-      maxSockets: 40,
-      maxFreeSockets: 10,
-    });
+    this.retry = { limit: this.max_fails || 2 };
+  }
+
+  private getAgent() {
+    if (!this.agent) {
+      const agentInstance = new CustomAgents(this.config.url, this.proxy, this.agent_options);
+      return agentInstance.get();
+    } else {
+      return this.agent;
+    }
   }
 
   /**
@@ -149,6 +167,7 @@ class ProxyStorage implements IProxy {
    * @param {*} options
    * @param {*} cb
    * @return {Request}
+   * @deprecated do not use
    */
   private request(options: any, cb?: Callback): Stream.Readable {
     let json;
@@ -195,10 +214,8 @@ class ProxyStorage implements IProxy {
       ? function (err, res, body): void {
           let error;
           const responseLength = err ? 0 : body.length;
-          // $FlowFixMe
           processBody();
           logActivity();
-          // $FlowFixMe
           cb(err, res, body);
 
           /**
@@ -212,7 +229,6 @@ class ProxyStorage implements IProxy {
 
             if (options.json && res.statusCode < 300) {
               try {
-                // $FlowFixMe
                 body = JSON.parse(body.toString(CHARACTER_ENCODING.UTF8));
               } catch (_err: any) {
                 body = {};
@@ -265,9 +281,9 @@ class ProxyStorage implements IProxy {
       agentOptions: this.agent_options,
     };
 
-    if (this.ca) {
+    if (typeof this.ca === 'string') {
       requestOptions = Object.assign({}, requestOptions, {
-        ca: this.ca,
+        ca: fs.readFileSync(this.ca),
       });
     }
 
@@ -316,6 +332,7 @@ class ProxyStorage implements IProxy {
    * @param {Object} options
    * @return {Object}
    * @private
+   * @deprecated use getHeadersNext
    */
   private _setHeaders(options: any): Headers {
     const headers = options.headers || {};
@@ -329,6 +346,18 @@ class ProxyStorage implements IProxy {
     headers[userAgent] = headers[userAgent] || `npm (${this.userAgent})`;
 
     return this._setAuth(headers);
+  }
+
+  public getHeadersNext(headers = {}): gotHeaders {
+    const accept = HEADERS.ACCEPT;
+    const acceptEncoding = HEADERS.ACCEPT_ENCODING;
+    const userAgent = HEADERS.USER_AGENT;
+
+    headers[accept] = headers[accept] || contentTypeAccept;
+    headers[acceptEncoding] = headers[acceptEncoding] || 'gzip';
+    // registry.npmjs.org will only return search result if user-agent include string 'npm'
+    headers[userAgent] = headers[userAgent] || `npm (${this.userAgent})`;
+    return this.setAuthNext(headers);
   }
 
   /**
@@ -370,6 +399,53 @@ class ProxyStorage implements IProxy {
     }
 
     if (_.isNil(token)) {
+      this._throwErrorAuth(constants.ERROR_CODE.token_required);
+    }
+
+    // define type Auth allow basic and bearer
+    const type = tokenConf.type || TOKEN_BASIC;
+    this._setHeaderAuthorization(headers, type, token);
+
+    return headers;
+  }
+
+  /**
+   * Validate configuration auth and assign Header authorization
+   * @param {Object} headers
+   * @return {Object}
+   * @private
+   */
+  private setAuthNext(headers: gotHeaders): gotHeaders {
+    const { auth } = this.config;
+    if (typeof auth === 'undefined' || typeof headers[HEADERS.AUTHORIZATION] === 'string') {
+      return headers;
+    }
+
+    if (_.isObject(auth) === false && _.isObject(auth.token) === false) {
+      this._throwErrorAuth('Auth invalid');
+    }
+
+    // get NPM_TOKEN http://blog.npmjs.org/post/118393368555/deploying-with-npm-private-modules
+    // or get other variable export in env
+    // https://github.com/verdaccio/verdaccio/releases/tag/v2.5.0
+    let token: any;
+    const tokenConf: any = auth;
+    if (_.isNil(tokenConf.token) === false && _.isString(tokenConf.token)) {
+      token = tokenConf.token;
+    } else if (_.isNil(tokenConf.token_env) === false) {
+      if (typeof tokenConf.token_env === 'string') {
+        token = process.env[tokenConf.token_env];
+      } else if (typeof tokenConf.token_env === 'boolean' && tokenConf.token_env) {
+        token = process.env.NPM_TOKEN;
+      } else {
+        this.logger.error(constants.ERROR_CODE.token_required);
+        this._throwErrorAuth(constants.ERROR_CODE.token_required);
+      }
+    } else {
+      token = process.env.NPM_TOKEN;
+    }
+
+    if (typeof token === 'undefined') {
       this._throwErrorAuth(constants.ERROR_CODE.token_required);
     }
 
@@ -426,6 +502,7 @@ class ProxyStorage implements IProxy {
 
    * @param {Object} headers
    * @private
+   * @deprecated use applyUplinkHeaders
    */
   private _overrideWithUpLinkConfLocaligHeaders(headers: Headers): any {
     if (!this.config.headers) {
@@ -439,11 +516,169 @@ class ProxyStorage implements IProxy {
     }
   }
 
+  private applyUplinkHeaders(headers: gotHeaders): gotHeaders {
+    if (!this.config.headers) {
+      return headers;
+    }
+
+    // add/override headers specified in the config
+    /* eslint guard-for-in: 0 */
+    for (const key in this.config.headers) {
+      headers[key] = this.config.headers[key];
+    }
+    return headers;
+  }
+
+  public async getRemoteMetadataNext(
+    name: string,
+    options: ISyncUplinksOptions
+  ): Promise<[Manifest, string]> {
+    if (this._ifRequestFailure()) {
+      throw errorUtils.getInternalError(API_ERROR.UPLINK_OFFLINE);
+    }
+
+    // FUTURE: allow mix headers that comes from the client
+    debug('get metadata for %s', name);
+    let headers = this.getHeadersNext(options?.headers);
+    headers = this.addProxyHeadersNext(headers, options.remoteAddress);
+    headers = this.applyUplinkHeaders(headers);
+    // the following headers cannot be overwritten
+    if (_.isNil(options.etag) === false) {
+      headers[HEADERS.NONE_MATCH] = options.etag;
+      headers[HEADERS.ACCEPT] = contentTypeAccept;
+    }
+    const method = options.method || 'GET';
+    const uri = this.config.url + `/${encode(name)}`;
+    debug('request uri for %s', uri);
+    let response;
+    let responseLength = 0;
+    try {
+      response = await got(uri, {
+        headers,
+        responseType: 'json',
+        method,
+        agent: this.agent,
+        // FIXME: this should be taken from construtor as priority
+        retry: options?.retry || this.retry,
+        timeout: options?.timeout,
+        hooks: {
+          afterResponse: [
+            (afterResponse) => {
+              const code = afterResponse.statusCode;
+              if (code >= HTTP_STATUS.OK && code < HTTP_STATUS.MULTIPLE_CHOICES) {
+                if (this.failed_requests >= this.max_fails) {
+                  this.failed_requests = 0;
+                  this.logger.warn(
+                    {
+                      host: this.url.host,
+                    },
+                    'host @{host} is now online'
+                  );
+                }
+              }
+
+              return afterResponse;
+            },
+          ],
+          beforeRetry: [
+            // FUTURE: got 12.0.0, the option arg should be removed
+            (_options, error: any, count) => {
+              this.failed_requests = count ?? 0;
+              this.logger.info(
+                {
+                  request: {
+                    method: method,
+                    url: uri,
+                  },
+                  error: error.message,
+                  retryCount: this.failed_requests,
+                },
+                "retry @{retryCount} req: '@{request.method} @{request.url}'"
+              );
+              if (this.failed_requests >= this.max_fails) {
+                this.logger.warn(
+                  {
+                    host: this.url.host,
+                  },
+                  'host @{host} is now offline'
+                );
+              }
+            },
+          ],
+        },
+      })
+        .on('request', () => {
+          this.last_request_time = Date.now();
+        })
+        .on('response', (eventResponse) => {
+          const message = "@{!status}, req: '@{request.method} @{request.url}' (streaming)";
+          this.logger.http(
+            {
+              request: {
+                method: method,
+                url: uri,
+              },
+              status: _.isNull(eventResponse) === false ? eventResponse.statusCode : 'ERR',
+            },
+            message
+          );
+        })
+        .on('downloadProgress', (progress) => {
+          if (progress.total) {
+            responseLength = progress.total;
+          }
+        });
+      const etag = response.headers.etag as string;
+      const data = response.body;
+
+      // not modified status (304) registry does not return any payload
+      // it is handled as an error
+      if (response?.statusCode === HTTP_STATUS.NOT_MODIFIED) {
+        throw errorUtils.getCode(HTTP_STATUS.NOT_MODIFIED, API_ERROR.NOT_MODIFIED_NO_DATA);
+      }
+
+      debug('uri %s success', uri);
+      const message = "@{!status}, req: '@{request.method} @{request.url}'";
+      this.logger.http(
+        {
+          // if error is null/false change this to undefined so it wont log
+          request: { method: method, url: uri },
+          status: response.statusCode,
+          bytes: {
+            in: options?.json ? JSON.stringify(options?.json).length : 0,
+            out: responseLength || 0,
+          },
+        },
+        message
+      );
+      return [data, etag];
+    } catch (err: any) {
+      debug('uri %s fail', uri);
+      if (err.code === 'ERR_NON_2XX_3XX_RESPONSE') {
+        const code = err.response.statusCode;
+        if (code === HTTP_STATUS.NOT_FOUND) {
+          throw errorUtils.getNotFound(errorUtils.API_ERROR.NOT_PACKAGE_UPLINK);
+        }
+
+        if (!(code >= HTTP_STATUS.OK && code < HTTP_STATUS.MULTIPLE_CHOICES)) {
+          const error = errorUtils.getInternalError(
+            `${errorUtils.API_ERROR.BAD_STATUS_CODE}: ${code}`
+          );
+          // we need this code to identify outside which status code triggered the error
+          error.remoteStatus = code;
+          throw error;
+        }
+      }
+      throw err;
+    }
+  }
+
   /**
    * Get a remote package metadata
    * @param {*} name package name
    * @param {*} options request options, eg: eTag.
    * @param {*} callback
+   * @deprecated do not use this method, use getRemoteMetadataNext
    */
   public getRemoteMetadata(name: string, options: any, callback: Callback): void {
     const headers = {};
@@ -477,6 +712,85 @@ class ProxyStorage implements IProxy {
         callback(null, body, res.headers.etag);
       }
     );
+  }
+
+  public async fetchTarballNext(url: string, options: ISyncUplinksOptions): Promise<any> {
+    return new Promise((resolve, reject) => {
+      let current_length = 0;
+      let expected_length;
+      const fetchStream = new PassThrough({});
+      debug('fetching url for %s', url);
+      let headers = this.getHeadersNext(options?.headers);
+      headers = this.addProxyHeadersNext(headers, options.remoteAddress);
+      headers = this.applyUplinkHeaders(headers);
+      // the following headers cannot be overwritten
+      if (_.isNil(options.etag) === false) {
+        headers[HEADERS.NONE_MATCH] = options.etag;
+        headers[HEADERS.ACCEPT] = contentTypeAccept;
+      }
+      const method = 'GET';
+      // const uri = this.config.url + `/${encode(name)}`;
+      debug('request uri for %s', url);
+      const readStream = got.stream(url, {
+        headers,
+        method,
+        agent: this.agent,
+        // FIXME: this should be taken from construtor as priority
+        retry: options?.retry,
+        timeout: options?.timeout,
+      });
+
+      readStream.on('request', async function () {
+        try {
+          await pipeline(readStream, fetchStream);
+        } catch (err: any) {
+          reject(err);
+        }
+      });
+
+      readStream.on('response', (res) => {
+        // if (response.headers.age > 3600) {
+        //   console.log('Failure - response too old');
+        //   readStream.destroy(); // Destroy the stream to prevent hanging resources.
+        //   return;
+        // }
+        if (res.statusCode === HTTP_STATUS.NOT_FOUND) {
+          return fetchStream.emit(
+            'error',
+            errorUtils.getNotFound(errorUtils.API_ERROR.NOT_FILE_UPLINK)
+          );
+        }
+
+        if (!(res.statusCode >= HTTP_STATUS.OK && res.statusCode < HTTP_STATUS.MULTIPLE_CHOICES)) {
+          return fetchStream.emit(
+            'error',
+            errorUtils.getInternalError(`bad uplink status code: ${res.statusCode}`)
+          );
+        }
+
+        if (res.headers[HEADER_TYPE.CONTENT_LENGTH]) {
+          expected_length = res.headers[HEADER_TYPE.CONTENT_LENGTH];
+          fetchStream.emit(HEADER_TYPE.CONTENT_LENGTH, res.headers[HEADER_TYPE.CONTENT_LENGTH]);
+        }
+        // readStream.on('retry', {});
+
+        // Prevent `onError` being called twice.
+        // readStream.off('error', (err) => {
+        //   console.log('error stream fetch', err);
+        // });
+
+        // try {
+        //   // await pipeline(readStream, createWriteStream('image.png'));
+
+        //   console.log('Success');
+        //   retr
+        // } catch (error) {
+        //   onError(error);
+        // }
+      });
+
+      resolve(fetchStream);
+    });
   }
 
   /**
@@ -582,6 +896,7 @@ class ProxyStorage implements IProxy {
    * FIXME: object mutations, it should return an new object
    * @param {*} req the http request
    * @param {*} headers the request headers
+   * @deprecated addProxyHeadersNext
    */
   private _addProxyHeaders(req: any, headers: any): void {
     if (req) {
@@ -591,7 +906,7 @@ class ProxyStorage implements IProxy {
       // Otherwise misconfigured proxy could return 407:
       // https://github.com/rlidwka/sinopia/issues/254
       // @ts-ignore
-      if (!this.proxy) {
+      if (!this.agent) {
         headers[HEADERS.FORWARDED_FOR] =
           (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'] + ', ' : '') +
           req.connection.remoteAddress;
@@ -604,10 +919,28 @@ class ProxyStorage implements IProxy {
     headers['Via'] += '1.1 ' + this.server_id + ' (Verdaccio)';
   }
 
+  private addProxyHeadersNext(headers: gotHeaders, remoteAddress?: string): gotHeaders {
+    // Only submit X-Forwarded-For field if we don't have a proxy selected
+    // in the config file.
+    //
+    // Otherwise misconfigured proxy could return 407
+    if (!this.proxy) {
+      headers[HEADERS.FORWARDED_FOR] =
+        (headers['x-forwarded-for'] ? headers['x-forwarded-for'] + ', ' : '') + remoteAddress;
+    }
+
+    // always attach Via header to avoid loops, even if we're not proxying
+    headers['via'] = headers['via'] ? headers['via'] + ', ' : '';
+    headers['via'] += '1.1 ' + this.server_id + ' (Verdaccio)';
+
+    return headers;
+  }
+
   /**
    * Check whether the remote host is available.
    * @param {*} alive
    * @return {Boolean}
+   * @deprecated not use
    */
   private _statusCheck(alive?: boolean): boolean | void {
     if (arguments.length === 0) {
@@ -699,18 +1032,14 @@ class ProxyStorage implements IProxy {
               { url: this.url.href, rule: noProxyItem },
               'not using proxy for @{url}, excluded by @{rule} rule'
             );
-            // @ts-ignore
-            this.proxy = false;
+            this.proxy = undefined;
           }
           break;
         }
       }
     }
 
-    // if it's non-string (i.e. "false"), don't use it
-    if (_.isString(this.proxy) === false) {
-      delete this.proxy;
-    } else {
+    if (typeof this.proxy === 'string') {
       this.logger.debug(
         { url: this.url.href, proxy: this.proxy },
         'using proxy @{proxy} for @{url}'

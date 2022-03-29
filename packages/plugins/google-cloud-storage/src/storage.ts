@@ -1,6 +1,6 @@
 import { DownloadResponse, File } from '@google-cloud/storage';
 import { Response } from 'request';
-import { Readable } from 'stream';
+import { PassThrough, Readable, Writable } from 'stream';
 
 import { HTTP_STATUS, VerdaccioError, errorUtils } from '@verdaccio/core';
 import { ReadTarball, UploadTarball } from '@verdaccio/streams';
@@ -44,6 +44,27 @@ class GoogleCloudStorageHandler implements IPackageStorageManager {
     this.helper = helper;
     this.config = config;
     this.key = 'VerdaccioMetadataStore';
+  }
+
+  public async writeTarballNext(pkgName: string, { signal }): Promise<Writable> {
+    // @ts-ignore
+    return new WritableStream({ write: () => {} });
+  }
+
+  public async hasTarball(fileName: string): Promise<boolean> {
+    throw new Error('not  implemented');
+  }
+  public async hasPackage(): Promise<boolean> {
+    return false;
+  }
+
+  public async createPackageNext(name: string, manifest: Package): Promise<void> {
+    return;
+  }
+
+  public async readPackageNext(name: string): Promise<Package> {
+    // @ts-ignore
+    return;
   }
 
   public updatePackage(
@@ -218,6 +239,13 @@ class GoogleCloudStorageHandler implements IPackageStorageManager {
 
   private _convertToString(value: Package): string {
     return JSON.stringify(value, null, '\t');
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public async readTarballNext(pkgName: string, { signal }): Promise<PassThrough> {
+    const stream = new PassThrough();
+    stream.emit('error', errorUtils.getInternalError('not inplemented'));
+    return stream;
   }
 
   public readPackage(name: string, cb: ReadPackageCallback): void {

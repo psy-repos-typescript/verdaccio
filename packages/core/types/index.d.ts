@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { PassThrough } from 'stream';
+import { PassThrough, PipelinePromise, Readable, Stream, Writable } from 'stream';
 
 declare module '@verdaccio/types' {
   type StringValue = string | void | null;
@@ -71,9 +71,17 @@ declare module '@verdaccio/types' {
     bodyAfter?: string[];
   } & CommonWebConf;
 
+  interface Signatures {
+    keyid: string;
+    sig: string;
+  }
+
   interface Dist {
+    'npm-signature'?: string;
+    fileCount?: number;
     integrity?: string;
     shasum: string;
+    unpackedSize?: number;
     tarball: string;
   }
 
@@ -156,8 +164,8 @@ declare module '@verdaccio/types' {
   }
 
   interface AttachMentsItem {
-    content_type?: string;
     data?: string;
+    content_type?: string;
     length?: number;
     shasum?: string;
     version?: string;
@@ -208,12 +216,12 @@ declare module '@verdaccio/types' {
   interface Manifest {
     _id?: string;
     name: string;
-    versions: Versions;
     'dist-tags': GenericBody;
     time: GenericBody;
     readme?: string;
     users?: PackageUsers;
     _distfiles: DistFiles;
+    versions: Versions;
     _attachments: AttachMents;
     _uplinks: UpLinks;
     _rev: string;
@@ -326,7 +334,7 @@ declare module '@verdaccio/types' {
     user: string;
   }
 
-  type IPackageStorage = ILocalPackageManager | void;
+  type IPackageStorage = ILocalPackageManager | undefined;
   type IPackageStorageManager = ILocalPackageManager;
   type IPluginStorage<T> = ILocalData<T>;
 
@@ -516,13 +524,20 @@ declare module '@verdaccio/types' {
 
   interface ILocalPackageManager {
     logger: Logger;
-    writeTarball(pkgName: string): IUploadTarball;
-    readTarball(pkgName: string): IReadTarball;
-    readPackage(fileName: string, callback: ReadPackageCallback): void;
-    createPackage(pkgName: string, value: Package, cb: CallbackAction): void;
+    // Old list of methods, should be removed in the future
+
     deletePackage(fileName: string): Promise<void>;
     removePackage(): Promise<void>;
-    // @deprecated
+
+    // @deprecated use writeTarballNext
+    writeTarball(pkgName: string): IUploadTarball;
+    // @deprecated use readTarballNext
+    readTarball(pkgName: string): IReadTarball;
+    // @deprecated use readPackageNext
+    readPackage(fileName: string, callback: ReadPackageCallback): void;
+    // @deprecated use createPackageNext
+    createPackage(pkgName: string, value: Package, cb: CallbackAction): void;
+    // @deprecated use updatePackageNext
     updatePackage(
       pkgFileName: string,
       updateHandler: StorageUpdateCallback,
@@ -530,14 +545,23 @@ declare module '@verdaccio/types' {
       transformPackage: PackageTransformer,
       onEnd: Callback
     ): void;
-    // @deprecated
+    // @deprecated use savePackageNext
     savePackage(fileName: string, json: Package, callback: CallbackAction): void;
     //  next packages migration (this list is meant to replace the callback parent functions)
     updatePackageNext(
       packageName: string,
-      handleUpdate: (manifest: Package) => Promise<Package>
-    ): Promise<Package>;
-    savePackageNext(name: string, value: Package): Promise<void>;
+      handleUpdate: (manifest: Manifest) => Promise<Manifest>
+    ): Promise<Manifest>;
+    readPackageNext(name: string): Promise<Manifest>;
+    savePackageNext(pkgName: string, value: Manifest): Promise<void>;
+    readTarballNext(pkgName: string, { signal }): Promise<Readable>;
+    createPackageNext(name: string, manifest: Manifest): Promise<void>;
+    writeTarballNext(tarballName: string, { signal }): Promise<Writable>;
+    // new methods
+    // verify if tarball exist in the storage
+    hasTarball(fileName: string): Promise<boolean>;
+    // verify if package exist in the storage
+    hasPackage(): Promise<boolean>;
   }
 
   interface TarballActions {

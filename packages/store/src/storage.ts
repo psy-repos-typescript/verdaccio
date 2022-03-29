@@ -2,6 +2,8 @@ import assert from 'assert';
 import async, { AsyncResultArrayCallback } from 'async';
 import buildDebug from 'debug';
 import _ from 'lodash';
+import { PassThrough } from 'stream';
+import { pipeline } from 'stream/promises';
 
 import { hasProxyTo } from '@verdaccio/config';
 import {
@@ -12,9 +14,8 @@ import {
   pkgUtils,
   validatioUtils,
 } from '@verdaccio/core';
-import { logger } from '@verdaccio/logger';
 import { ProxyStorage } from '@verdaccio/proxy';
-import { IProxy, ProxyList } from '@verdaccio/proxy';
+import { IProxy } from '@verdaccio/proxy';
 import { ReadTarball } from '@verdaccio/streams';
 import {
   convertDistRemoteToLocalTarballUrls,
@@ -28,66 +29,34 @@ import {
   GenericBody,
   IReadTarball,
   IUploadTarball,
-  Logger,
-  MergeTags,
-  Package,
+  Manifest,
   StringValue,
-  Token,
-  TokenFilter,
   Version,
-  Versions,
 } from '@verdaccio/types';
-import { getVersion, normalizeDistTags } from '@verdaccio/utils';
 
+import AbstractStorage from './abstract-storage';
 import { LocalStorage } from './local-storage';
-import { SearchManager } from './search';
 // import { isPublishablePackage, validateInputs } from './star-utils';
 import {
+  STORAGE,
   checkPackageLocal,
   checkPackageRemote,
   cleanUpLinksRef,
   generatePackageTemplate,
   mergeUplinkTimeIntoLocal,
+  normalizeDistTags,
   publishPackage,
 } from './storage-utils';
-import { IGetPackageOptions, IGetPackageOptionsNext, IPluginFilters, ISyncUplinks } from './type';
+import { IGetPackageOptions, IGetPackageOptionsNext, ISyncUplinks } from './type';
 // import { StarBody, Users } from './type';
-import { setupUpLinks, updateVersionsHiddenUpLink } from './uplink-util';
+import { updateVersionsHiddenUpLink } from './uplink-util';
+import { getVersion } from './versions-utils';
 
 const debug = buildDebug('verdaccio:storage');
-class Storage {
-  public localStorage: LocalStorage;
-  public searchManager: SearchManager | null;
-  public readonly config: Config;
-  public readonly logger: Logger;
-  public readonly uplinks: ProxyList;
-  public filters: IPluginFilters;
-
+class Storage extends AbstractStorage {
   public constructor(config: Config) {
-    this.config = config;
-    this.uplinks = setupUpLinks(config);
+    super(config);
     debug('uplinks available %o', Object.keys(this.uplinks));
-    this.logger = logger.child({ module: 'storage' });
-    this.filters = [];
-    // @ts-ignore
-    this.localStorage = null;
-    this.searchManager = null;
-  }
-
-  public async init(config: Config, filters: IPluginFilters = []): Promise<void> {
-    if (this.localStorage === null) {
-      this.filters = filters || [];
-      debug('filters available %o', filters);
-      this.localStorage = new LocalStorage(this.config, logger);
-      await this.localStorage.init();
-      debug('local init storage initialized');
-      await this.localStorage.getSecret(config);
-      debug('local storage secret initialized');
-      this.searchManager = new SearchManager(this.uplinks, this.localStorage);
-    } else {
-      debug('storage has been already initialized');
-    }
-    return;
   }
 
   /**
@@ -103,7 +72,7 @@ class Storage {
       debug('look up remote for %o', name);
       await checkPackageRemote(
         name,
-        this._isAllowPublishOffline(),
+        this.isAllowPublishOffline(),
         this._syncUplinksMetadata.bind(this)
       );
       debug('publishing a package for %o', name);
@@ -116,20 +85,25 @@ class Storage {
     }
   }
 
+  public async updateVersionsManifest(name: string): Promise<void> {
+    // we check if package exist already locally
+    const manifest = await this.getPackageLocalMetadata(name);
+  }
+
   /**
    * Add a {name} package to a system
    Function checks if package with the same name is available from uplinks.
    If it isn't, we create package locally
    Used storages: local (write) && uplinks
    */
-  public async addPackageNext(name: string, metadata: Package): Promise<Package> {
+  public async addPackageNext(name: string, metadata: Manifest): Promise<Manifest> {
     try {
       debug('add package for %o', name);
       await checkPackageLocal(name, this.localStorage);
       debug('look up remote for %o', name);
       await checkPackageRemote(
         name,
-        this._isAllowPublishOffline(),
+        this.isAllowPublishOffline(),
         this._syncUplinksMetadata.bind(this)
       );
       debug('publishing a package for %o', name);
@@ -143,29 +117,10 @@ class Storage {
     }
   }
 
-  private _isAllowPublishOffline(): boolean {
-    return (
-      typeof this.config.publish !== 'undefined' &&
-      _.isBoolean(this.config.publish.allow_offline) &&
-      this.config.publish.allow_offline
-    );
-  }
-
-  public readTokens(filter: TokenFilter): Promise<Token[]> {
-    return this.localStorage.readTokens(filter);
-  }
-
-  public saveToken(token: Token): Promise<void> {
-    return this.localStorage.saveToken(token);
-  }
-
-  public deleteToken(user: string, tokenKey: string): Promise<any> {
-    return this.localStorage.deleteToken(user, tokenKey);
-  }
-
   /**
    * Add a new version of package {name} to a system
    Used storages: local (write)
+   @deprecated use addVersionNext
    */
   public addVersion(
     name: string,
@@ -178,25 +133,6 @@ class Storage {
     this.localStorage.addVersion(name, version, metadata, tag, callback);
   }
 
-  public async addVersionNext(
-    name: string,
-    version: string,
-    metadata: Version,
-    tag: StringValue
-  ): Promise<void> {
-    debug('add the version %o for package %o', version, name);
-    return this.localStorage.addVersionNext(name, version, metadata, tag);
-  }
-
-  /**
-   * Tags a package version with a provided tag
-   Used storages: local (write)
-   */
-  public mergeTags(name: string, tagHash: MergeTags, callback: CallbackAction): void {
-    debug('merge tags for package %o tags %o', name, tagHash);
-    this.localStorage.mergeTags(name, tagHash, callback);
-  }
-
   /**
    * Change an existing package (i.e. unpublish one version)
    Function changes a package info from local storage and all uplinks with write access./
@@ -204,7 +140,7 @@ class Storage {
    */
   public changePackage(
     name: string,
-    metadata: Package,
+    metadata: Manifest,
     revision: string,
     callback: Callback
   ): void {
@@ -217,7 +153,11 @@ class Storage {
    Function changes a package info from local storage and all uplinks with write access./
    Used storages: local (write)
    */
-  public async changePackageNext(name: string, metadata: Package, revision: string): Promise<void> {
+  public async changePackageNext(
+    name: string,
+    metadata: Manifest,
+    revision: string
+  ): Promise<void> {
     debug('change existing package for package %o revision %o', name, revision);
     this.localStorage.changePackageNext(name, metadata, revision);
   }
@@ -258,6 +198,64 @@ class Storage {
     return this.localStorage.addTarball(name, filename);
   }
 
+  public async getTarballNext(
+    name: string,
+    filename: string,
+    { signal, enableRemote }
+  ): Promise<PassThrough | void> {
+    debug('get tarball for package %o filename %o', name, filename);
+    let isOpen = false;
+    const localStream = await this.getLocalTarball(name, filename, { signal });
+    localStream.on('open', async () => {
+      isOpen = true;
+    });
+
+    try {
+      // throw new Error('no uplink');
+      const localTarballStream = new PassThrough();
+      await pipeline(localStream, localTarballStream, { signal });
+      return localTarballStream;
+    } catch (err: any) {
+      this.logger.error({ err: err.message }, 'some error on getTarballNext @{err}');
+
+      // if (isOpen || err.status !== HTTP_STATUS.NOT_FOUND) {
+      //   throw err;
+      // }
+      // if (true) {
+      if (err.code === STORAGE.NO_SUCH_FILE_ERROR || err.code === HTTP_STATUS.NOT_FOUND) {
+        const manifest = await this.getPackageLocalMetadata(name);
+        // const [updatedManifest, errors] = this.syncUplinksMetadataNext(name, manifest, {});
+        if (
+          _.isNil(err) &&
+          manifest._distfiles &&
+          _.isNil(manifest._distfiles[filename]) === false
+        ) {
+          // file exist locally
+        } else {
+          // we look up at uplinks
+          // we try to fetch the latest tarball url
+          const tarballUrl = manifest._distfiles[filename];
+
+          try {
+            const remoteStream = await this.fetchTarllballFromUpstream(name, tarballUrl);
+            return remoteStream;
+          } catch (err: any) {
+            this.logger.error({ err: err.message }, 'some error on uplink getTarballNext @{err}');
+            throw err;
+          }
+        }
+
+        // throw errorUtils.getNotFound(API_ERROR.NO_SUCH_FILE);
+      } else {
+        this.logger.error({ err: err.message }, 'some error on fatal @{err}');
+        throw err;
+      }
+    }
+
+    // 1. Falla, actualizar metadata
+    // 2. Obtener latest version tarball and append stream
+  }
+
   /**
    Get a tarball from a storage for {name} package
    Function is synchronous and returns a ReadableStream
@@ -288,13 +286,13 @@ class Storage {
       const err404 = err;
       localStream.abort();
       localStream = null; // we force for garbage collector
-      self.localStorage.getPackageMetadata(name, (err, info: Package): void => {
+      self.localStorage.getPackageMetadata(name, (err, info: Manifest): void => {
         if (_.isNil(err) && info._distfiles && _.isNil(info._distfiles[filename]) === false) {
           // information about this file exists locally
           serveFile(info._distfiles[filename]);
         } else {
           // we know nothing about this file, trying to get information elsewhere
-          self._syncUplinksMetadata(name, info, {}, (err, info: Package): any => {
+          self._syncUplinksMetadata(name, info, {}, (err, info: Manifest): any => {
             if (_.isNil(err) === false) {
               return readStream.emit('error', err);
             }
@@ -344,6 +342,9 @@ class Storage {
       let savestream: IUploadTarball | null = null;
       if (uplink.config.cache) {
         savestream = self.localStorage.addTarball(name, filename);
+        savestream.on('success', () => {
+          debug('tarball %s saved locally', filename);
+        });
       }
 
       let on_open = function (): void {
@@ -494,7 +495,7 @@ class Storage {
     throw errorUtils.getNotFound(`${API_ERROR.VERSION_NOT_EXIST}: ${queryVersion}`);
   }
 
-  public async getPackageManifest(options: IGetPackageOptionsNext): Promise<Package> {
+  public async getPackageManifest(options: IGetPackageOptionsNext): Promise<Manifest> {
     // convert dist remotes to local bars
     const [manifest] = await this.getPackageNext(options);
     const convertedManifest = convertDistRemoteToLocalTarballUrls(
@@ -511,7 +512,7 @@ class Storage {
    * @param options {Object}
    * @returns A package manifest or specific version
    */
-  public async getPackageByOptions(options: IGetPackageOptionsNext): Promise<Package | Version> {
+  public async getPackageByOptions(options: IGetPackageOptionsNext): Promise<Manifest | Version> {
     // if no version we return the whole manifest
     if (_.isNil(options.version) === false) {
       return this.getPackageByVersion(options);
@@ -520,63 +521,49 @@ class Storage {
     }
   }
 
-  public async getPackageNext(options: IGetPackageOptionsNext): Promise<[Package, any[]]> {
+  public async getPackageNext(options: IGetPackageOptionsNext): Promise<[Manifest, any[]]> {
     const { name } = options;
     debug('get package for %o', name);
+    let data: Manifest | void;
+
     try {
-      let data: Package;
-      try {
-        data = await this.localStorage.getPackageMetadataNext(name);
-      } catch (err: any) {
-        // we don't have package locally, so we need to fetch it from uplinks
-        if (err && (!err.status || err.status >= HTTP_STATUS.INTERNAL_ERROR)) {
-          throw err;
-        }
-      }
-
-      // time to sync with uplinks if we have any
-      debug('sync uplinks for %o', name);
-      // @ts-expect-error
-      return this._syncUplinksMetadataNext(name, data, {
-        req: options.req,
-        uplinksLook: options.uplinksLook,
-        keepUpLinkData: options.keepUpLinkData,
-      });
+      data = await this.getPackageLocalMetadata(name);
     } catch (err: any) {
-      this.logger.error(
-        { name, err: err.message },
-        'error on get package for @{name} with error @{err}'
-      );
-      throw err;
+      // we don't have package locally, so we need to fetch it from uplinks
+      if (err && (!err.status || err.status >= HTTP_STATUS.INTERNAL_ERROR)) {
+        throw err;
+      }
     }
-  }
 
-  private _syncUplinksMetadataNext(
-    name: string,
-    data: Package,
-    { uplinksLook, keepUpLinkData, req }
-  ): Promise<[Package, any[]]> {
-    return new Promise((resolve, reject) => {
-      this._syncUplinksMetadata(
-        name,
-        data,
-        { req: req, uplinksLook },
-        function getPackageSynUpLinksCallback(err, result: Package, uplinkErrors): void {
-          if (err) {
-            debug('error on sync package for %o with error %o', name, err?.message);
-            return reject(err);
-          }
+    // time to sync with uplinks if we have any
+    debug('sync uplinks for %o', name);
+    const [remoteManifest, upLinksErrors] = await this.syncUplinksMetadataNext(
+      name,
+      data as Manifest,
+      {
+        uplinksLook: options.uplinksLook,
+        remoteAddress: options.requestOptions.remoteAddress,
+        // etag??
+      }
+    );
 
-          const normalizedPkg = Object.assign({}, result, {
-            ...normalizeDistTags(cleanUpLinksRef(result, keepUpLinkData)),
-            _attachments: {},
-          });
+    if (!remoteManifest && typeof data === 'undefined') {
+      throw errorUtils.getNotFound(`${API_ERROR.NOT_PACKAGE_UPLINK}: ${name}`);
+    }
 
-          debug('no. sync uplinks errors %o for %s', uplinkErrors?.length, name);
-          resolve([normalizedPkg, uplinkErrors]);
-        }
-      );
+    if (!remoteManifest) {
+      // no data on uplinks
+      return [data as Manifest, upLinksErrors];
+    }
+
+    const normalizedPkg = Object.assign({}, remoteManifest, {
+      // FIXME: clean up  mutation of cleanUpLinksRef
+      ...normalizeDistTags(cleanUpLinksRef(remoteManifest, options.keepUpLinkData)),
+      _attachments: {},
     });
+
+    debug('no. sync uplinks errors %o for %s', upLinksErrors?.length, name);
+    return [normalizedPkg, upLinksErrors];
   }
 
   /**
@@ -591,6 +578,7 @@ class Storage {
    * @property {object}  options.req Express `req` object
    * @property {boolean} options.keepUpLinkData keep up link info in package meta, last update, etc.
    * @property {function} options.callback Callback for receive data
+   * @deprecated use await storage.getPackageByOptions
    */
   public getPackage(options: IGetPackageOptions): void {
     const { name } = options;
@@ -607,7 +595,7 @@ class Storage {
         name,
         data,
         { req: options.req, uplinksLook: options.uplinksLook },
-        function getPackageSynUpLinksCallback(err, result: Package, uplinkErrors): void {
+        function getPackageSynUpLinksCallback(err, result: Manifest, uplinkErrors): void {
           if (err) {
             debug('error on sync package for %o with error %o', name, err?.message);
             return options.callback(err);
@@ -640,7 +628,7 @@ class Storage {
           const getPackage = function (itemPkg): void {
             self.localStorage.getPackageMetadata(
               locals[itemPkg],
-              function (err, pkgMetadata: Package): void {
+              function (err, pkgMetadata: Manifest): void {
                 if (_.isNil(err)) {
                   const latest = pkgMetadata[DIST_TAGS].latest;
                   if (latest && pkgMetadata.versions[latest]) {
@@ -686,16 +674,15 @@ class Storage {
     }
   }
 
-  // notas, debo migrar _syncUplinksMetadata algo mas lindo
-
   /**
    * Function fetches package metadata from uplinks and synchronizes it with local data
    if package is available locally, it MUST be provided in pkginfo
    returns callback(err, result, uplink_errors)
+   @deprecated use syncUplinksMetadataNext
    */
   public _syncUplinksMetadata(
     name: string,
-    packageInfo: Package,
+    packageInfo: Manifest,
     options: ISyncUplinks,
     callback: Callback
   ): void {
@@ -731,7 +718,7 @@ class Storage {
             return cb();
           }
 
-          _options.etag = upLinkMeta.etag;
+          _options.etag = upLinkMeta?.etag;
         }
 
         upLink.getRemoteMetadata(name, _options, (err, upLinkResponse, eTag): void => {
@@ -819,7 +806,7 @@ class Storage {
         self.localStorage.updateVersions(
           name,
           packageInfo,
-          async (err, packageJsonLocal: Package): Promise<any> => {
+          async (err, packageJsonLocal: Manifest): Promise<any> => {
             if (err) {
               return callback(err);
             }
@@ -843,24 +830,6 @@ class Storage {
         );
       }
     );
-  }
-
-  /**
-   * Set a hidden value for each version.
-   * @param {Array} versions list of version
-   * @param {String} upLink uplink name
-   * @private
-   */
-  public _updateVersionsHiddenUpLink(versions: Versions, upLink: IProxy): void {
-    for (const i in versions) {
-      if (Object.prototype.hasOwnProperty.call(versions, i)) {
-        const version = versions[i];
-
-        // holds a "hidden" value to be used by the package storage.
-        // $FlowFixMe
-        version[Symbol.for('__verdaccio_uplink')] = upLink.upname;
-      }
-    }
   }
 }
 
