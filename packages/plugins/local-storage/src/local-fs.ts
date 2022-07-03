@@ -530,19 +530,29 @@ export default class LocalFS implements ILocalFSPackageManager {
     return uploadStream;
   }
 
-  public async readTarballNext(pkgName: string, { signal }): Promise<Readable> {
-    const pathName: string = this._getStorage(pkgName);
+  /**
+   * Read a tarball from the storage
+   * @param tarballName tarball name eg: foo-1.0.0.tgz
+   * @param options {signal} abort signal
+   * @returns Readable stream
+   */
+  public async readTarballNext(tarballName: string, { signal }): Promise<Readable> {
+    const pathName: string = this._getStorage(tarballName);
     const readStream = addAbortSignal(signal, fs.createReadStream(pathName));
     readStream.on('open', async function (fileDescriptorId: number) {
+      // if abort, the descriptor is null
+      debug('file descriptor id %o', fileDescriptorId);
       if (fileDescriptorId) {
         const stats = await fstatPromise(fileDescriptorId);
+        debug('file size %o', stats.size);
         readStream.emit('content-length', stats.size);
-      } else {
-        readStream.emit('content-length', 0);
       }
     });
     readStream.on('error', (error) => {
-      this.logger.error({ err: error.message, pkgName }, 'error on read tarball for @{pkgName}');
+      this.logger.error(
+        { err: error.message, tarballName },
+        'error on read tarball for @{pkgName}'
+      );
     });
     return readStream;
   }
