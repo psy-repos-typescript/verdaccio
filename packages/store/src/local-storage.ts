@@ -126,7 +126,7 @@ class LocalStorage {
     return this.storagePlugin;
   }
 
-  // @deprecated use abstract-storage.ts:addPackage
+  // @deprecated use abstract-storage.ts:createNewLocalCachePackage
   public addPackage(name: string, pkg: Manifest, callback: Callback): void {
     debug(`creating a package for`, name);
     const storage: any = this._getLocalStorage(name);

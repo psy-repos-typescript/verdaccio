@@ -4,6 +4,43 @@ export interface DistTags {
   [key: string]: string;
 }
 
+export function addNewVersion(manifest: Manifest, version: string): Manifest {
+  const currentVersions = Object.keys(manifest.versions);
+  if (currentVersions.includes(version)) {
+    throw new Error(`Version ${version} already exists`);
+  }
+
+  const newManifest = { ...manifest };
+  newManifest.versions[version] = {
+    name: manifest.name,
+    version,
+    description: manifest.description ?? '',
+    readme: '',
+    main: 'index.js',
+    scripts: { test: 'echo "Error: no test specified" && exit 1' },
+    keywords: [],
+    author: { name: 'User NPM', email: 'user@domain.com' },
+    license: 'ISC',
+    dependencies: { verdaccio: '^2.7.2' },
+    readmeFilename: 'README.md',
+    _id: `${manifest.name}@${version}`,
+    _npmVersion: '5.5.1',
+    _npmUser: { name: 'foo' },
+    dist: {
+      integrity:
+        'sha512-6gHiERpiDgtb3hjqpQH5/i7zRmvYi9pmCjQf2ZMy3QEa9wVk9RgdZaPWUt7ZOnWUPFjcr9cmE6dUBf+XoPoH4g==',
+      shasum: '2c03764f651a9f016ca0b7620421457b619151b9',
+      tarball: `http://localhost:5555/${manifest.name}/-/${manifest.name}-${version}.tgz`,
+    },
+    contributors: [],
+  };
+  // update the latest with the new version
+  newManifest['dist-tags'] = { latest: version };
+  // add new version does not need attachmetns
+  newManifest._attachments = {};
+  return newManifest;
+}
+
 export function generatePackageMetadata(
   pkgName: string,
   version = '1.0.0',

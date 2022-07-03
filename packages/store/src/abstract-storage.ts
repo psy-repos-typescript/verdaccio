@@ -296,7 +296,7 @@ class AbstractStorage {
     } else {
       debug('invalid body format');
       logger.info(
-        { packageName: name },
+        { packageName: options.name },
         `wrong package format on publish a package @{packageName}`
       );
       throw errorUtils.getBadRequest(API_ERROR.UNSUPORTED_REGISTRY_CALL);
@@ -366,7 +366,7 @@ class AbstractStorage {
   }
 
   /**
-   * Create a package
+   * Create a new package.
    * This situation happens only of the package does not exist on the cache.
    *
    * @param body package metadata

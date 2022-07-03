@@ -331,7 +331,7 @@ export default class LocalFS implements ILocalFSPackageManager {
       const res = await this._readStorageFile(this._getStorage(packageJSONFileName));
       const data: any = JSON.parse(res.toString('utf8'));
 
-      debug('read storage file %o has succeed', name);
+      debug('read storage file %o has succeeded', name);
       return data;
     } catch (err: any) {
       if (err.code !== noSuchFile) {
@@ -538,6 +538,7 @@ export default class LocalFS implements ILocalFSPackageManager {
    */
   public async readTarballNext(tarballName: string, { signal }): Promise<Readable> {
     const pathName: string = this._getStorage(tarballName);
+    debug('read a tarball %o', pathName);
     const readStream = addAbortSignal(signal, fs.createReadStream(pathName));
     readStream.on('open', async function (fileDescriptorId: number) {
       // if abort, the descriptor is null

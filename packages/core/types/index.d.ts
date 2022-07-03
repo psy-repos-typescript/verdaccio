@@ -216,6 +216,9 @@ declare module '@verdaccio/types' {
   interface Manifest {
     _id?: string;
     name: string;
+    description?: string;
+    // TODO: not clear what access exactly means
+    access?: any;
     'dist-tags': GenericBody;
     time: GenericBody;
     readme?: string;

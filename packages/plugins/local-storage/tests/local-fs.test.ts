@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { PassThrough } from 'stream';
+import { PassThrough, Readable } from 'stream';
 
 import { createTempFolder } from '@verdaccio/test-helper';
 import { ILocalPackageManager, Logger, Manifest, Package } from '@verdaccio/types';
@@ -151,6 +151,22 @@ describe('Local FS test', () => {
         logger
       );
       await expect(localFs.removePackage()).rejects.toThrow(/ENOENT/);
+    });
+  });
+
+  describe('writeTarballNext', () => {
+    test('should write a tarball', (done) => {
+      const abort = new AbortController();
+      const tmp = createTempFolder('local-fs-write-tarball');
+      const localFs = new LocalDriver(tmp, logger);
+      const readableStream = Readable.from('foooo');
+      // TODO: verify file exist
+      localFs.writeTarballNext('juan-1.0.0.tgz', { signal: abort.signal }).then((stream) => {
+        stream.on('finish', () => {
+          done();
+        });
+        readableStream.pipe(stream);
+      });
     });
   });
 

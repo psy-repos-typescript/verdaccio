@@ -1,15 +1,21 @@
 import nock from 'nock';
 import * as httpMocks from 'node-mocks-http';
+import path from 'path';
 
 import { Config } from '@verdaccio/config';
-import { API_ERROR, DIST_TAGS, HEADERS, errorUtils } from '@verdaccio/core';
+import { API_ERROR, DIST_TAGS, HEADERS, HEADER_TYPE, errorUtils } from '@verdaccio/core';
 import { setup } from '@verdaccio/logger';
 import { configExample, generateRamdonStorage } from '@verdaccio/mock';
-import { generatePackageMetadata } from '@verdaccio/test-helper';
+import {
+  addNewVersion,
+  generatePackageMetadata,
+  generatePublishNewVersionManifest,
+} from '@verdaccio/test-helper';
 import { Manifest } from '@verdaccio/types';
 
 import { Storage } from '../src';
 import manifestFooRemoteNpmjs from './fixtures/manifests/foo-npmjs.json';
+import { addPackageToStore } from './helpers';
 
 // import manifestFooRemoteVerdaccio from './fixtures/manifests/foo-verdaccio.json';
 
@@ -39,6 +45,90 @@ describe('storage', () => {
 
       await storage.addPackage('foo', fooManifest, (err) => {
         expect(err).toBeNull();
+      });
+    });
+  });
+
+  describe('getTarballNext', () => {
+    //  nock('https://registry.verdaccio.org').get('/foo').reply(201, manifestFooRemoteNpmjs);
+
+    test('should not found a package anywhere', (done) => {
+      const config = new Config(
+        configExample({
+          storage: generateRamdonStorage(),
+        })
+      );
+      const storage = new Storage(config);
+      storage.init(config).then(() => {
+        const abort = new AbortController();
+        storage
+          .getTarballNext('some-tarball', 'some-tarball-1.0.0.tgz', {
+            signal: abort.signal,
+          })
+          .then((stream) => {
+            stream.on('error', (err) => {
+              expect(err).toEqual(errorUtils.getNotFound(API_ERROR.NO_PACKAGE));
+              done();
+            });
+          });
+      });
+    });
+
+    test.only('should fails local and get from upstream', (done) => {
+      const pkgName = 'upstream';
+      const upstreamManifest = addNewVersion(generatePackageMetadata(pkgName, '1.0.0'), '1.0.1');
+      nock('https://registry.verdaccio.org').get('/upstream').reply(201, upstreamManifest);
+      nock('http://localhost:5555')
+        .get(`/${pkgName}/-/${pkgName}-1.0.1.tgz`)
+        // types does not match here with documentation
+        // @ts-expect-error
+        .replyWithFile(201, path.join(__dirname, 'fixtures/tarball.tgz'), {
+          [HEADER_TYPE.CONTENT_LENGTH]: 0,
+        });
+      const config = new Config(
+        configExample(
+          {
+            storage: generateRamdonStorage(),
+          },
+          './fixtures/config/getTarballNext-getupstream.yaml',
+          __dirname
+        )
+      );
+      const storage = new Storage(config);
+      storage.init(config).then(() => {
+        const ac = new AbortController();
+        const bodyNewManifest = generatePackageMetadata(pkgName, '1.0.0');
+        storage
+          .updateManifest(bodyNewManifest, {
+            signal: ac.signal,
+            name: pkgName,
+            uplinksLook: true,
+            revision: '1',
+            requestOptions: {
+              host: 'localhost',
+              protocol: 'http',
+              headers: {},
+            },
+          })
+          .then(() => {
+            const abort = new AbortController();
+            storage
+              .getTarballNext(pkgName, `${pkgName}-1.0.1.tgz`, {
+                signal: abort.signal,
+              })
+              .then((stream) => {
+                stream.on('data', (dat) => {
+                  expect(dat).toBeDefined();
+                });
+                stream.on('end', () => {
+                  done();
+                });
+                stream.on('error', (er) => {
+                  console.log('err', er);
+                  done('this should not happen');
+                });
+              });
+          });
       });
     });
   });

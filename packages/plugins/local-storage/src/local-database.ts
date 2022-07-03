@@ -246,7 +246,7 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
 
     try {
       await writeFilePromise(this.path, JSON.stringify(this.data));
-      debug('sync write succeed');
+      debug('sync write succeeded');
 
       return null;
     } catch (err: any) {

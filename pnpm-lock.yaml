@@ -1130,6 +1130,7 @@ importers:
       '@verdaccio/utils': workspace:6.0.0-6-next.11
       body-parser: 1.19.1
       express: 4.17.2
+      fs-extra: 10.1.0
       supertest: 6.2.2
     devDependencies:
       '@verdaccio/auth': link:../../auth
@@ -1140,6 +1141,7 @@ importers:
       '@verdaccio/utils': link:../../utils
       body-parser: 1.19.1
       express: 4.17.2
+      fs-extra: 10.1.0
       supertest: 6.2.2
 
   packages/tools/mock:

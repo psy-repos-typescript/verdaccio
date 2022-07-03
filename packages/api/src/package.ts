@@ -107,7 +107,7 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
       try {
         const stream = (await storage.getTarballNext(pkg, filename, {
           signal: abort.signal,
-          enableRemote: true,
+          // enableRemote: true,
         })) as any;
 
         stream.on('content-length', (size) => {
@@ -119,16 +119,17 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
           next(err);
         });
 
-        req.on('close', () => {
-          debug('search web aborted');
-          abort.abort();
-        });
+        // req.on('close', () => {
+        //   debug('close new tarball stream');
+        //   abort.abort();
+        // });
 
-        // TODO: review if this is need it
-        res.once('error', () => {
-          debug('search web aborted');
-          abort.abort();
-        });
+        // // TODO: review if this is need it
+        // res.once('error', (err) => {
+        //   debug('error on new tarball stream');
+        //   // abort.abort();
+        //   next(err);
+        // });
 
         stream.pipe(res);
       } catch (err: any) {

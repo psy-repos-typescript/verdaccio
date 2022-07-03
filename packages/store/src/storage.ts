@@ -199,6 +199,127 @@ class Storage extends AbstractStorage {
     return this.localStorage.addTarball(name, filename);
   }
 
+  private async getTarballFromUpstream(name: string, filename: string, { signal }) {
+    const cachedManifest: Manifest = await this.getPackageLocalMetadata(name);
+    // dist url should be on local cache metadata
+    if (
+      cachedManifest?._distfiles &&
+      typeof cachedManifest?._distfiles[filename]?.url === 'string'
+    ) {
+      debug('dist file found, using it %o', cachedManifest?._distfiles[filename].url);
+      // dist file found, proceed to download
+      const distFile = cachedManifest._distfiles[filename];
+
+      let current_length = 0;
+      let expected_length;
+      const passThroughRemoteStream = new PassThrough();
+      const proxy = this.getUpLinkForDistFile(name, distFile);
+      const remoteStream = proxy.fetchTarballNext(distFile.url, {});
+
+      remoteStream.on('request', async function () {
+        try {
+          debug('remote stream request');
+          await pipeline(remoteStream, passThroughRemoteStream, { signal });
+        } catch (err: any) {
+          // eslint-disable-next-line no-console
+          console.log('error on pipeline', err);
+        }
+      });
+
+      remoteStream
+        .on('response', async (res) => {
+          if (res.statusCode === HTTP_STATUS.NOT_FOUND) {
+            debug('remote stream response 404');
+            passThroughRemoteStream.emit(
+              'error',
+              errorUtils.getNotFound(errorUtils.API_ERROR.NOT_FILE_UPLINK)
+            );
+            return;
+          }
+
+          if (
+            !(res.statusCode >= HTTP_STATUS.OK && res.statusCode < HTTP_STATUS.MULTIPLE_CHOICES)
+          ) {
+            debug('remote stream response ok');
+            passThroughRemoteStream.emit(
+              'error',
+              errorUtils.getInternalError(`bad uplink status code: ${res.statusCode}`)
+            );
+            return;
+          }
+
+          if (res.headers[HEADER_TYPE.CONTENT_LENGTH]) {
+            expected_length = res.headers[HEADER_TYPE.CONTENT_LENGTH];
+            debug('remote stream response content length %o', expected_length);
+            passThroughRemoteStream.emit(
+              HEADER_TYPE.CONTENT_LENGTH,
+              res.headers[HEADER_TYPE.CONTENT_LENGTH]
+            );
+          }
+        })
+        .on('downloadProgress', (progress) => {
+          current_length = progress.transferred;
+          if (typeof expected_length === 'undefined' && progress.total) {
+            expected_length = progress.total;
+          }
+        })
+        .on('end', () => {
+          if (expected_length && current_length != expected_length) {
+            debug('stream end, but length mismatch %o %o', current_length, expected_length);
+            passThroughRemoteStream.emit(
+              'error',
+              errorUtils.getInternalError(API_ERROR.CONTENT_MISMATCH)
+            );
+          }
+          debug('remote stream end');
+        })
+        .on('error', (err) => {
+          debug('remote stream error %o', err);
+          passThroughRemoteStream.emit('error', err);
+        });
+      return passThroughRemoteStream;
+    } else {
+      debug('dist file not found, proceed update upstream');
+      // no dist url found, proceed to fetch from upstream
+      // should not be the case
+      const passThroughRemoteStream = new PassThrough();
+      // ensure get the latest data
+      const [updatedManifest] = await this.syncUplinksMetadataNext(name, cachedManifest, {
+        uplinksLook: true,
+      });
+      const distFile = (updatedManifest as Manifest)._distfiles[filename];
+
+      if (updatedManifest === null || !distFile) {
+        debug('remote tarball not found');
+        throw errorUtils.getNotFound(API_ERROR.NO_SUCH_FILE);
+      }
+
+      const proxy = this.getUpLinkForDistFile(name, distFile);
+      const remoteStream = proxy.fetchTarballNext(distFile.url, {});
+      remoteStream.on('response', async () => {
+        try {
+          const storage = this.getPrivatePackageStorage(name);
+          if (proxy.config.cache === true && storage) {
+            debug('cache remote tarball enabled');
+            const localStorageWriteStream = await storage.writeTarballNext(filename, {
+              signal,
+            });
+            await pipeline(remoteStream, passThroughRemoteStream, localStorageWriteStream, {
+              signal,
+            });
+          } else {
+            debug('cache remote tarball disabled');
+            await pipeline(remoteStream, passThroughRemoteStream, { signal });
+          }
+        } catch (err) {
+          debug('error on pipeline downloading tarball for package %o', name);
+          passThroughRemoteStream.emit('error', err);
+        }
+      });
+      return passThroughRemoteStream;
+    }
+  }
+
   /**
    *
    * @param name
@@ -206,144 +327,41 @@ class Storage extends AbstractStorage {
    * @param param2
    * @returns
    */
-  public async getTarballNext(
-    name: string,
-    filename: string,
-    { signal }
-  ): Promise<PassThrough | void> {
+  public async getTarballNext(name: string, filename: string, { signal }): Promise<PassThrough> {
     debug('get tarball for package %o filename %o', name, filename);
+    // TODO: check if isOpen is need it after all.
     let isOpen = false;
+    const localTarballStream = new PassThrough();
     const localStream = await this.getLocalTarball(name, filename, { signal });
     localStream.on('open', async () => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       isOpen = true;
-    });
-
-    localStream.on('open', () => {
-      // eslint-disable-next-line no-console
-      console.log('open local stream');
-    });
-
-    try {
-      const localTarballStream = new PassThrough();
       await pipeline(localStream, localTarballStream, { signal });
-      return localTarballStream;
-    } catch (err: any) {
+    });
+
+    localStream.on('error', (err: any) => {
+      // eslint-disable-next-line no-console
       if (err.code === STORAGE.NO_SUCH_FILE_ERROR || err.code === HTTP_STATUS.NOT_FOUND) {
-        const cachedManifest: Manifest = await this.getPackageLocalMetadata(name);
-        // dist url should be on local cache metadata
-        if (
-          cachedManifest?._distfiles &&
-          typeof cachedManifest?._distfiles[filename]?.url === 'string'
-        ) {
-          // dist file found, proceed to download
-          const distFile = cachedManifest._distfiles[filename];
-
-          let current_length = 0;
-          let expected_length;
-          const passThroughRemoteStream = new PassThrough();
-          const proxy = this.getUpLinkForDistFile(name, distFile);
-          const remoteStream = proxy.fetchTarballNext(distFile.url, {});
-
-          remoteStream.on('request', async function () {
-            try {
-              await pipeline(remoteStream, passThroughRemoteStream, { signal });
-            } catch (err: any) {
-              // eslint-disable-next-line no-console
-              console.log('error on pipeline', err);
-            }
+        this.getTarballFromUpstream(name, filename, { signal })
+          .then((uplinkStream) => {
+            pipeline(uplinkStream, localTarballStream, { signal })
+              .then(() => {
+                debug('successfully downloaded tarball for package %o filename %o', name, filename);
+              })
+              .catch((err) => {
+                localTarballStream.emit('error', err);
+              });
+          })
+          .catch((err) => {
+            localTarballStream.emit('error', err);
           });
-
-          remoteStream
-            .on('response', async (res) => {
-              if (res.statusCode === HTTP_STATUS.NOT_FOUND) {
-                passThroughRemoteStream.emit(
-                  'error',
-                  errorUtils.getNotFound(errorUtils.API_ERROR.NOT_FILE_UPLINK)
-                );
-                return;
-              }
-
-              if (
-                !(res.statusCode >= HTTP_STATUS.OK && res.statusCode < HTTP_STATUS.MULTIPLE_CHOICES)
-              ) {
-                passThroughRemoteStream.emit(
-                  'error',
-                  errorUtils.getInternalError(`bad uplink status code: ${res.statusCode}`)
-                );
-                return;
-              }
-
-              if (res.headers[HEADER_TYPE.CONTENT_LENGTH]) {
-                expected_length = res.headers[HEADER_TYPE.CONTENT_LENGTH];
-                passThroughRemoteStream.emit(
-                  HEADER_TYPE.CONTENT_LENGTH,
-                  res.headers[HEADER_TYPE.CONTENT_LENGTH]
-                );
-              }
-            })
-            .on('downloadProgress', (progress) => {
-              current_length = progress.transferred;
-              if (typeof expected_length === 'undefined' && progress.total) {
-                expected_length = progress.total;
-              }
-            })
-            .on('end', () => {
-              if (expected_length && current_length != expected_length) {
-                passThroughRemoteStream.emit(
-                  'error',
-                  errorUtils.getInternalError(API_ERROR.CONTENT_MISMATCH)
-                );
-              }
-            })
-            .on('error', (err) => {
-              passThroughRemoteStream.emit('error', err);
-            });
-          return passThroughRemoteStream;
-        } else {
-          // no dist url found, proceed to fetch from upstream
-          // should not be the case
-          const passThroughRemoteStream = new PassThrough();
-          // ensure get the latest data
-          const [updatedManifest] = await this.syncUplinksMetadataNext(name, cachedManifest, {
-            uplinksLook: true,
-          });
-          const distFile = (updatedManifest as Manifest)._distfiles[filename];
-
-          if (updatedManifest === null || !distFile) {
-            debug('remote tarball not found');
-            throw errorUtils.getNotFound(API_ERROR.NO_SUCH_FILE);
-          }
-
-          const proxy = this.getUpLinkForDistFile(name, distFile);
-          const remoteStream = proxy.fetchTarballNext(distFile.url, {});
-          remoteStream.on('response', async () => {
-            try {
-              const storage = this.getPrivatePackageStorage(name);
-              if (proxy.config.cache === true && storage) {
-                debug('cache remote tarball enabled');
-                const localStorageWriteStream = await storage.writeTarballNext(filename, {
-                  signal,
-                });
-                await pipeline(remoteStream, localStorageWriteStream, passThroughRemoteStream, {
-                  signal,
-                });
-              } else {
-                debug('cache remote tarball disabled');
-                await pipeline(remoteStream, passThroughRemoteStream, { signal });
-              }
-            } catch (err) {
-              debug('error on pipeline downloading tarball for package %o', name);
-              passThroughRemoteStream.emit('error', err);
-            }
-          });
-          return passThroughRemoteStream;
-        }
       } else {
         this.logger.error({ err: err.message }, 'some error on fatal @{err}');
-        throw err;
+        localTarballStream.emit('error', err);
       }
-    }
+    });
+
+    return localTarballStream;
 
     // 1. Falla, actualizar metadata
     // 2. Obtener latest version tarball and append stream
