@@ -4,7 +4,7 @@ import fs from 'fs';
 import _ from 'lodash';
 import path from 'path';
 import sanitzers from 'sanitize-filename';
-import { Readable, Writable, addAbortSignal } from 'stream';
+import { Readable, Writable } from 'stream';
 
 import { VerdaccioError, errorUtils } from '@verdaccio/core';
 import { readFile, readFileNext, unlockFile, unlockFileNext } from '@verdaccio/file-locking';
@@ -375,44 +375,65 @@ export default class LocalFS implements ILocalFSPackageManager {
     });
   }
 
-  public async writeTarballNext(pkgName: string, { signal }): Promise<Writable> {
-    const pathName: string = this._getStorage(pkgName);
+  // remove the temporary file
+  private async removeTempFile(temporalName): Promise<void> {
+    debug('remove temporal file %o', temporalName);
+    await unlinkPromise(temporalName);
+    debug('removed temporal file %o', temporalName);
+  }
+
+  /**
+   * Write a tarball into the storage
+   * @param fileName package name
+   * @param param1
+   * @returns
+   */
+  public async writeTarballNext(fileName: string, { signal }): Promise<Writable> {
+    const pathName: string = this._getStorage(fileName);
     // create a temporary file to avoid conflicts or prev corruption files
     const temporalName = path.join(
       this.path,
-      `${pkgName}.tmp-${String(Math.random()).replace(/^0\./, '')}`
+      `${fileName}.tmp-${String(Math.random()).replace(/^0\./, '')}`
     );
-    const removeTempFile = async (): Promise<void> => {
-      debug('remove temporal file %o', temporalName);
-      await unlinkPromise(temporalName);
-      debug('removed temporal file %o', temporalName);
-    };
+
     debug('write a temporal name %o', temporalName);
     let opened = false;
-    const writeStream = addAbortSignal(signal, fs.createWriteStream(temporalName));
+    const writeStream = fs.createWriteStream(temporalName);
 
     writeStream.on('open', () => {
       opened = true;
     });
 
-    writeStream.on('error', async () => {
+    writeStream.on('error', async (err) => {
       if (opened) {
+        this.logger.error(
+          { err: err.message, fileName },
+          'error on open write tarball for @{pkgName}'
+        );
+        // TODO: maybe add .once
         writeStream.on('close', async () => {
-          await removeTempFile();
+          await this.removeTempFile(temporalName);
         });
       } else {
-        await removeTempFile();
+        this.logger.error(
+          { err: err.message, fileName },
+          'error a non open write tarball for @{pkgName}'
+        );
+        await this.removeTempFile(temporalName);
       }
     });
 
     // the 'close' event is emitted when the stream and any of its
     // underlying resources (a file descriptor, for example) have been closed.
-    writeStream.on('close', async function () {
+    // TODO: maybe add .once
+    writeStream.on('close', async () => {
       try {
         await renameTmpNext(temporalName, pathName);
       } catch (err) {
-        // remove temp file
-        console.error('error on rename tmp', err);
+        this.logger.error(
+          { err },
+          'error on rename temporal file, please report this is a bug @{err}'
+        );
       }
     });
 
@@ -423,10 +444,10 @@ export default class LocalFS implements ILocalFSPackageManager {
         if (opened) {
           // close always happens, even if error
           writeStream.once('close', async () => {
-            await removeTempFile();
+            await this.removeTempFile(temporalName);
           });
         } else {
-          await removeTempFile();
+          await this.removeTempFile(temporalName);
         }
       },
       { once: true }
@@ -435,6 +456,7 @@ export default class LocalFS implements ILocalFSPackageManager {
     return writeStream;
   }
 
+  // @deprecated use writeTarballNext
   public writeTarball(name: string): IUploadTarball {
     const uploadStream = new UploadTarball({});
     debug('write a tarball for a package %o', name);
@@ -508,9 +530,9 @@ export default class LocalFS implements ILocalFSPackageManager {
     return uploadStream;
   }
 
-  public async readTarballNext(pkgName: string, { signal }): Promise<Readable> {
+  public async readTarballNext(pkgName: string): Promise<Readable> {
     const pathName: string = this._getStorage(pkgName);
-    const readStream = addAbortSignal(signal, fs.createReadStream(pathName));
+    const readStream = fs.createReadStream(pathName);
     readStream.on('open', async function (fileDescriptorId: number) {
       const stats = await fstatPromise(fileDescriptorId);
       readStream.emit('content-length', stats.size);
@@ -588,7 +610,7 @@ export default class LocalFS implements ILocalFSPackageManager {
   }
 
   private _convertToString(value: Manifest): string {
-    return JSON.stringify(value, null, '\t');
+    return JSON.stringify(value);
   }
 
   public _getStorage(fileName = ''): string {

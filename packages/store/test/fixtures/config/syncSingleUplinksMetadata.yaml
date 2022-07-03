@@ -10,6 +10,10 @@ packages:
     access: $all
     publish: $authenticated
     proxy: ver
+  'foo-no-data':
+    access: $all
+    publish: $authenticated
+    proxy: ver
   '*':
     access: $all
     publish: $all

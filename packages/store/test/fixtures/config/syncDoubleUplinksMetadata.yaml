@@ -1,19 +1,25 @@
 uplinks:
-  npmjs:
-    url: https://registry.npmjs.org/
+  timeout:
+    url: https://registry.domain.com/
+  some:
+    url: https://registry.domain.com/
   ver:
     url: https://registry.verdaccio.org/
 packages:
   '@*/*':
     access: $all
     publish: $all
-    proxy: npmjs
+    proxy: some
+  'timeout':
+    access: $all
+    publish: $authenticated
+    proxy: timeout
   'foo':
     access: $all
     publish: $authenticated
-    proxy: npmjs ver
+    proxy: some ver
   '*':
     access: $all
     publish: $all
-    proxy: npmjs
+    proxy: some
 log: { type: stdout, format: pretty, level: warn }

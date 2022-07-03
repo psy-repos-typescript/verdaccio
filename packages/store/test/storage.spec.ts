@@ -6,13 +6,14 @@ import { API_ERROR, DIST_TAGS, HEADERS, errorUtils } from '@verdaccio/core';
 import { setup } from '@verdaccio/logger';
 import { configExample, generateRamdonStorage } from '@verdaccio/mock';
 import { generatePackageMetadata } from '@verdaccio/test-helper';
+import { Manifest } from '@verdaccio/types';
 
 import { Storage } from '../src';
 import manifestFooRemoteNpmjs from './fixtures/manifests/foo-npmjs.json';
 
 // import manifestFooRemoteVerdaccio from './fixtures/manifests/foo-verdaccio.json';
 
-setup([]);
+setup({ type: 'stdout', format: 'pretty', level: 'trace' });
 
 const domain = 'http://localhost:4873';
 const fakeHost = 'localhost:4873';
@@ -45,12 +46,14 @@ describe('storage', () => {
   describe('syncUplinksMetadataNext()', () => {
     describe('error handling', () => {
       test('should handle double failure on uplinks with timeout', async () => {
-        const fooManifest = generatePackageMetadata('foo', '8.0.0');
-        nock('https://registry.npmjs.org')
-          .get('/foo')
-          .delay(2000)
+        const fooManifest = generatePackageMetadata('timeout', '8.0.0');
+
+        nock('https://registry.domain.com')
+          .get('/timeout')
+          .times(10)
+          .delayConnection(2000)
           .reply(201, manifestFooRemoteNpmjs);
-        nock('https://registry.verdaccio.org').get('/foo').replyWithError('service in holidays');
+
         const config = new Config(
           configExample(
             {
@@ -60,11 +63,12 @@ describe('storage', () => {
             __dirname
           )
         );
+
         const storage = new Storage(config);
         await storage.init(config);
         await expect(
-          storage.syncUplinksMetadataNext(fooManifest.name, fooManifest, {
-            retry: 0,
+          storage.syncUplinksMetadataNext(fooManifest.name, null, {
+            retry: { limit: 0 },
             timeout: {
               lookup: 100,
               connect: 50,
@@ -93,14 +97,14 @@ describe('storage', () => {
         await storage.init(config);
         await expect(
           storage.syncUplinksMetadataNext(fooManifest.name, fooManifest, {
-            retry: 0,
+            retry: { limit: 0 },
           })
         ).rejects.toThrow(API_ERROR.NO_PACKAGE);
       });
 
       test('should handle one proxy reply 304', async () => {
-        const fooManifest = generatePackageMetadata('foo', '8.0.0');
-        nock('https://registry.verdaccio.org').get('/foo').reply(304);
+        const fooManifest = generatePackageMetadata('foo-no-data', '8.0.0');
+        nock('https://registry.verdaccio.org').get('/foo-no-data').reply(304);
         const config = new Config(
           configExample(
             {
@@ -137,11 +141,12 @@ describe('storage', () => {
         await storage.init(config);
 
         const [response] = await storage.syncUplinksMetadataNext(fooManifest.name, fooManifest);
-        expect(response.name).toEqual(fooManifest.name);
-        expect(response[DIST_TAGS].latest).toEqual('8.0.0');
+        expect(response).not.toBeNull();
+        expect((response as Manifest).name).toEqual(fooManifest.name);
+        expect((response as Manifest)[DIST_TAGS].latest).toEqual('8.0.0');
       });
 
-      test('should handle one proxy success with clean metadata', async () => {
+      test('should handle one proxy success with no local cache manifest', async () => {
         nock('https://registry.verdaccio.org').get('/foo').reply(201, manifestFooRemoteNpmjs);
         const config = new Config(
           configExample(
@@ -155,14 +160,14 @@ describe('storage', () => {
         const storage = new Storage(config);
         await storage.init(config);
 
-        // @ts-expect-error
-        const [response] = await storage.syncUplinksMetadataNext(fooManifest.name, {});
-        expect(response.name).toEqual(fooManifest.name);
+        const [response] = await storage.syncUplinksMetadataNext(fooManifest.name, null);
         // the latest from the remote manifest
-        expect(response[DIST_TAGS].latest).toEqual('0.0.7');
+        expect(response).not.toBeNull();
+        expect((response as Manifest).name).toEqual(fooManifest.name);
+        expect((response as Manifest)[DIST_TAGS].latest).toEqual('0.0.7');
       });
 
-      test('should handle no proxy found', async () => {
+      test('should handle no proxy found with local cache manifest', async () => {
         const fooManifest = generatePackageMetadata('foo', '8.0.0');
         nock('https://registry.verdaccio.org').get('/foo').reply(201, manifestFooRemoteNpmjs);
         const config = new Config(
@@ -178,9 +183,11 @@ describe('storage', () => {
         await storage.init(config);
 
         const [response] = await storage.syncUplinksMetadataNext(fooManifest.name, fooManifest);
-        expect(response.name).toEqual(fooManifest.name);
-        expect(response[DIST_TAGS].latest).toEqual('8.0.0');
+        expect(response).not.toBeNull();
+        expect((response as Manifest).name).toEqual(fooManifest.name);
+        expect((response as Manifest)[DIST_TAGS].latest).toEqual('8.0.0');
       });
+      test.todo('should handle double proxy with last one success');
     });
     describe('options', () => {
       test('should handle disable uplinks via options.uplinksLook=false', async () => {
@@ -201,14 +208,15 @@ describe('storage', () => {
         const [response] = await storage.syncUplinksMetadataNext(fooManifest.name, fooManifest, {
           uplinksLook: false,
         });
-        expect(response.name).toEqual(fooManifest.name);
-        expect(response[DIST_TAGS].latest).toEqual('8.0.0');
+
+        expect((response as Manifest).name).toEqual(fooManifest.name);
+        expect((response as Manifest)[DIST_TAGS].latest).toEqual('8.0.0');
       });
     });
   });
 
   // TODO: getPackageNext should replace getPackage eventually
-  describe('get packages getPackageNext()', () => {
+  describe('get packages getPackageByOptions()', () => {
     describe('with uplinks', () => {
       test('should get 201 and merge from uplink', async () => {
         nock(domain).get('/foo').reply(201, fooManifest);
@@ -232,11 +240,10 @@ describe('storage', () => {
           storage.getPackageByOptions({
             name: 'foo',
             uplinksLook: true,
-            req,
             requestOptions: {
               headers: req.headers as any,
               protocol: req.protocol,
-              host: req.get('host'),
+              host: req.get('host') as string,
             },
           })
         ).resolves.toEqual(expect.objectContaining({ name: 'foo' }));
@@ -265,11 +272,10 @@ describe('storage', () => {
             name: 'foo',
             version: '1.0.0',
             uplinksLook: true,
-            req,
             requestOptions: {
               headers: req.headers as any,
               protocol: req.protocol,
-              host: req.get('host'),
+              host: req.get('host') as string,
             },
           })
         ).resolves.toEqual(expect.objectContaining({ name: 'foo' }));
@@ -298,11 +304,10 @@ describe('storage', () => {
             name: 'foo',
             version: 'latest',
             uplinksLook: true,
-            req,
             requestOptions: {
               headers: req.headers as any,
               protocol: req.protocol,
-              host: req.get('host'),
+              host: req.get('host') as string,
             },
           })
         ).resolves.toEqual(expect.objectContaining({ name: 'foo' }));
@@ -331,11 +336,10 @@ describe('storage', () => {
             name: 'foo',
             version: '1.0.0-does-not-exist',
             uplinksLook: true,
-            req,
             requestOptions: {
               headers: req.headers as any,
               protocol: req.protocol,
-              host: req.get('host'),
+              host: req.get('host') as string,
             },
           })
         ).rejects.toThrow(
@@ -365,11 +369,10 @@ describe('storage', () => {
           storage.getPackageByOptions({
             name: 'foo2',
             uplinksLook: true,
-            req,
             requestOptions: {
               headers: req.headers as any,
               protocol: req.protocol,
-              host: req.get('host'),
+              host: req.get('host') as string,
             },
           })
         ).rejects.toThrow(errorUtils.getNotFound());
@@ -400,14 +403,14 @@ describe('storage', () => {
           storage.getPackageByOptions({
             name: 'foo2',
             uplinksLook: true,
-            req,
+            retry: { limit: 0 },
             requestOptions: {
               headers: req.headers as any,
               protocol: req.protocol,
-              host: req.get('host'),
+              host: req.get('host') as string,
             },
           })
-        ).rejects.toThrow(errorUtils.getServiceUnavailable());
+        ).rejects.toThrow(errorUtils.getServiceUnavailable('ETIMEDOUT'));
       });
     });
   });

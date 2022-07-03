@@ -3,7 +3,7 @@ import semver from 'semver';
 
 import { errorUtils, pkgUtils, validatioUtils } from '@verdaccio/core';
 import { API_ERROR, DIST_TAGS, HTTP_STATUS, USERS } from '@verdaccio/core';
-import { AttachMents, Manifest, Package, Version, Versions } from '@verdaccio/types';
+import { AttachMents, Manifest, Version, Versions } from '@verdaccio/types';
 import { generateRandomHexString, isNil, isObject } from '@verdaccio/utils';
 
 import { LocalStorage } from './local-storage';
@@ -16,7 +16,7 @@ export const STORAGE = {
   DEFAULT_REVISION: '0-0000000000000000',
 };
 
-export function generatePackageTemplate(name: string): Package {
+export function generatePackageTemplate(name: string): Manifest {
   return {
     // standard things
     name,
@@ -64,7 +64,7 @@ export function generateRevision(rev: string): string {
   return (+_rev[0] || 0) + 1 + '-' + generateRandomHexString();
 }
 
-export function getLatestReadme(pkg: Package): string {
+export function getLatestReadme(pkg: Manifest): string {
   const versions = pkg['versions'] || {};
   const distTags = pkg[DIST_TAGS] || {};
   // FIXME: here is a bit tricky add the types
@@ -195,7 +195,7 @@ export function checkPackageRemote(
   });
 }
 
-export function mergeUplinkTimeIntoLocal(localMetadata: Package, remoteMetadata: Package): any {
+export function mergeUplinkTimeIntoLocal(localMetadata: Manifest, remoteMetadata: Manifest): any {
   if ('time' in remoteMetadata) {
     return Object.assign({}, localMetadata.time, remoteMetadata.time);
   }
@@ -204,9 +204,9 @@ export function mergeUplinkTimeIntoLocal(localMetadata: Package, remoteMetadata:
 }
 
 export function mergeUplinkTimeIntoLocalNext(
-  cacheManifest: Package,
-  remoteManifest: Package
-): Package {
+  cacheManifest: Manifest,
+  remoteManifest: Manifest
+): Manifest {
   if ('time' in remoteManifest) {
     // remote override cache time conflicts
     return { ...cacheManifest, time: { ...cacheManifest.time, ...remoteManifest.time } };
@@ -215,7 +215,7 @@ export function mergeUplinkTimeIntoLocalNext(
   return cacheManifest;
 }
 
-export function updateUpLinkMetadata(uplinkId, manifest: Package, etag: string) {
+export function updateUpLinkMetadata(uplinkId, manifest: Manifest, etag: string) {
   const _uplinks = {
     ...manifest._uplinks,
     [uplinkId]: {
@@ -229,7 +229,7 @@ export function updateUpLinkMetadata(uplinkId, manifest: Package, etag: string) 
   };
 }
 
-export function prepareSearchPackage(data: Package): any {
+export function prepareSearchPackage(data: Manifest): any {
   const latest = pkgUtils.getLatest(data);
 
   if (latest && data.versions[latest]) {
@@ -262,7 +262,7 @@ export function isDifferentThanOne(versions: Versions | AttachMents): boolean {
 }
 
 // @deprecated use validationUtils.validatePublishNewPackage
-export function hasInvalidPublishBody(manifest: Pick<Package, '_attachments' | 'versions'>) {
+export function hasInvalidPublishBody(manifest: Pick<Manifest, '_attachments' | 'versions'>) {
   if (!manifest) {
     return false;
   }

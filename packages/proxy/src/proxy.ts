@@ -6,7 +6,6 @@ import type { Agents, Options } from 'got';
 import _ from 'lodash';
 import requestDeprecated from 'request';
 import Stream, { PassThrough, Readable } from 'stream';
-import { pipeline } from 'stream/promises';
 import { Headers, fetch as undiciFetch } from 'undici';
 import { URL } from 'url';
 
@@ -76,11 +75,21 @@ export interface IProxy {
   max_fails: number;
   fail_timeout: number;
   upname: string;
-  fetchTarball(url: string): IReadTarball;
   search(options: ProxySearchParams): Promise<Stream.Readable>;
+  // @deprecated
+  fetchTarball(url: string): IReadTarball;
+  // @deprecated
   getRemoteMetadata(name: string, options: any, callback: Callback): void;
+  // new methods replace and remove next
   getRemoteMetadataNext(name: string, options: ISyncUplinksOptions): Promise<[Manifest, string]>;
+  fetchTarballNext(
+    url: string,
+    options: Pick<ISyncUplinksOptions, 'remoteAddress' | 'etag' | 'retry'>
+  ): PassThrough;
 }
+
+// this type is need it by storage
+export { Options as FetchOptions };
 
 export interface ISyncUplinksOptions extends Options {
   uplinksLook?: boolean;
@@ -146,7 +155,8 @@ class ProxyStorage implements IProxy {
 
     // a bunch of different configurable timers
     this.maxage = parseInterval(setConfig(this.config, 'maxage', '2m'));
-    this.timeout = parseInterval(setConfig(this.config, 'timeout', '30s'));
+    // TODO: restore to 30s (default)
+    this.timeout = parseInterval(setConfig(this.config, 'timeout', '3m'));
     this.max_fails = Number(setConfig(this.config, 'max_fails', 2));
     this.fail_timeout = parseInterval(setConfig(this.config, 'fail_timeout', '5m'));
     this.strict_ssl = Boolean(setConfig(this.config, 'strict_ssl', true));
@@ -155,6 +165,7 @@ class ProxyStorage implements IProxy {
 
   private getAgent() {
     if (!this.agent) {
+      // TODO: the config.ca (certificates) is not yet injected here
       const agentInstance = new CustomAgents(this.config.url, this.proxy, this.agent_options);
       return agentInstance.get();
     } else {
@@ -553,18 +564,20 @@ class ProxyStorage implements IProxy {
     let response;
     let responseLength = 0;
     try {
+      const retry = options?.retry ?? this.retry;
       response = await got(uri, {
         headers,
         responseType: 'json',
         method,
         agent: this.agent,
         // FIXME: this should be taken from construtor as priority
-        retry: options?.retry || this.retry,
+        retry,
         timeout: options?.timeout,
         hooks: {
           afterResponse: [
             (afterResponse) => {
               const code = afterResponse.statusCode;
+              debug('code response %s', code);
               if (code >= HTTP_STATUS.OK && code < HTTP_STATUS.MULTIPLE_CHOICES) {
                 if (this.failed_requests >= this.max_fails) {
                   this.failed_requests = 0;
@@ -714,83 +727,38 @@ class ProxyStorage implements IProxy {
     );
   }
 
-  public async fetchTarballNext(url: string, options: ISyncUplinksOptions): Promise<any> {
-    return new Promise((resolve, reject) => {
-      let current_length = 0;
-      let expected_length;
-      const fetchStream = new PassThrough({});
-      debug('fetching url for %s', url);
-      let headers = this.getHeadersNext(options?.headers);
-      headers = this.addProxyHeadersNext(headers, options.remoteAddress);
-      headers = this.applyUplinkHeaders(headers);
-      // the following headers cannot be overwritten
-      if (_.isNil(options.etag) === false) {
-        headers[HEADERS.NONE_MATCH] = options.etag;
-        headers[HEADERS.ACCEPT] = contentTypeAccept;
-      }
-      const method = 'GET';
-      // const uri = this.config.url + `/${encode(name)}`;
-      debug('request uri for %s', url);
-      const readStream = got.stream(url, {
+  public fetchTarballNext(
+    url: string,
+    overrideOptions: Pick<ISyncUplinksOptions, 'remoteAddress' | 'etag' | 'retry'>
+  ): any {
+    debug('fetching url for %s', url);
+    const options = { ...this.config, ...overrideOptions };
+    let headers = this.getHeadersNext(options?.headers);
+    headers = this.addProxyHeadersNext(headers, options.remoteAddress);
+    headers = this.applyUplinkHeaders(headers);
+    // the following headers cannot be overwritten
+    if (_.isNil(options.etag) === false) {
+      headers[HEADERS.NONE_MATCH] = options.etag;
+      headers[HEADERS.ACCEPT] = contentTypeAccept;
+    }
+    const method = 'GET';
+    // const uri = this.config.url + `/${encode(name)}`;
+    debug('request uri for %s', url);
+
+    const readStream = got
+      .stream(url, {
         headers,
         method,
         agent: this.agent,
         // FIXME: this should be taken from construtor as priority
-        retry: options?.retry,
-        timeout: options?.timeout,
+        retry: this.retry ?? options?.retry,
+        timeout: this.timeout,
+      })
+      .on('request', () => {
+        this.last_request_time = Date.now();
       });
 
-      readStream.on('request', async function () {
-        try {
-          await pipeline(readStream, fetchStream);
-        } catch (err: any) {
-          reject(err);
-        }
-      });
-
-      readStream.on('response', (res) => {
-        // if (response.headers.age > 3600) {
-        //   console.log('Failure - response too old');
-        //   readStream.destroy(); // Destroy the stream to prevent hanging resources.
-        //   return;
-        // }
-        if (res.statusCode === HTTP_STATUS.NOT_FOUND) {
-          return fetchStream.emit(
-            'error',
-            errorUtils.getNotFound(errorUtils.API_ERROR.NOT_FILE_UPLINK)
-          );
-        }
-
-        if (!(res.statusCode >= HTTP_STATUS.OK && res.statusCode < HTTP_STATUS.MULTIPLE_CHOICES)) {
-          return fetchStream.emit(
-            'error',
-            errorUtils.getInternalError(`bad uplink status code: ${res.statusCode}`)
-          );
-        }
-
-        if (res.headers[HEADER_TYPE.CONTENT_LENGTH]) {
-          expected_length = res.headers[HEADER_TYPE.CONTENT_LENGTH];
-          fetchStream.emit(HEADER_TYPE.CONTENT_LENGTH, res.headers[HEADER_TYPE.CONTENT_LENGTH]);
-        }
-        // readStream.on('retry', {});
-
-        // Prevent `onError` being called twice.
-        // readStream.off('error', (err) => {
-        //   console.log('error stream fetch', err);
-        // });
-
-        // try {
-        //   // await pipeline(readStream, createWriteStream('image.png'));
-
-        //   console.log('Success');
-        //   retr
-        // } catch (error) {
-        //   onError(error);
-        // }
-      });
-
-      resolve(fetchStream);
-    });
+    return readStream;
   }
 
   /**

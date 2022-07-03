@@ -1,6 +1,5 @@
 import buildDebug from 'debug';
 import { Router } from 'express';
-import { pipeline } from 'stream/promises';
 
 import { IAuth } from '@verdaccio/auth';
 import { HEADERS, HEADER_TYPE, errorUtils } from '@verdaccio/core';
@@ -115,14 +114,25 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
           res.header(HEADER_TYPE.CONTENT_LENGTH, size);
         });
 
-        req.on('aborted', () => {
+        stream.once('error', (err) => {
+          res.locals.report_error(err);
+          next(err);
+        });
+
+        req.on('close', () => {
           debug('search web aborted');
           abort.abort();
         });
 
-        await pipeline(stream, res, { signal: abort.signal });
+        // TODO: review if this is need it
+        res.once('error', () => {
+          debug('search web aborted');
+          abort.abort();
+        });
+
+        stream.pipe(res);
       } catch (err: any) {
-        console.log('error request', err);
+        // console.log('catch API error request', err);
         res.locals.report_error(err);
         next(err);
       }

@@ -9,6 +9,7 @@ import { hasProxyTo } from '@verdaccio/config';
 import {
   API_ERROR,
   DIST_TAGS,
+  HEADER_TYPE,
   HTTP_STATUS,
   errorUtils,
   pkgUtils,
@@ -85,10 +86,10 @@ class Storage extends AbstractStorage {
     }
   }
 
-  public async updateVersionsManifest(name: string): Promise<void> {
-    // we check if package exist already locally
-    const manifest = await this.getPackageLocalMetadata(name);
-  }
+  // public async updateVersionsManifest(name: string): Promise<void> {
+  //   // we check if package exist already locally
+  //   const manifest = await this.getPackageLocalMetadata(name);
+  // }
 
   /**
    * Add a {name} package to a system
@@ -198,54 +199,146 @@ class Storage extends AbstractStorage {
     return this.localStorage.addTarball(name, filename);
   }
 
+  /**
+   *
+   * @param name
+   * @param filename
+   * @param param2
+   * @returns
+   */
   public async getTarballNext(
     name: string,
     filename: string,
-    { signal, enableRemote }
+    { signal }
   ): Promise<PassThrough | void> {
     debug('get tarball for package %o filename %o', name, filename);
     let isOpen = false;
     const localStream = await this.getLocalTarball(name, filename, { signal });
     localStream.on('open', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       isOpen = true;
     });
 
+    localStream.on('open', () => {
+      // eslint-disable-next-line no-console
+      console.log('open local stream');
+    });
+
     try {
-      // throw new Error('no uplink');
       const localTarballStream = new PassThrough();
       await pipeline(localStream, localTarballStream, { signal });
       return localTarballStream;
     } catch (err: any) {
-      this.logger.error({ err: err.message }, 'some error on getTarballNext @{err}');
-
-      // if (isOpen || err.status !== HTTP_STATUS.NOT_FOUND) {
-      //   throw err;
-      // }
-      // if (true) {
       if (err.code === STORAGE.NO_SUCH_FILE_ERROR || err.code === HTTP_STATUS.NOT_FOUND) {
-        const manifest = await this.getPackageLocalMetadata(name);
-        // const [updatedManifest, errors] = this.syncUplinksMetadataNext(name, manifest, {});
+        const cachedManifest: Manifest = await this.getPackageLocalMetadata(name);
+        // dist url should be on local cache metadata
         if (
-          _.isNil(err) &&
-          manifest._distfiles &&
-          _.isNil(manifest._distfiles[filename]) === false
+          cachedManifest?._distfiles &&
+          typeof cachedManifest?._distfiles[filename]?.url === 'string'
         ) {
-          // file exist locally
+          // dist file found, proceed to download
+          const distFile = cachedManifest._distfiles[filename];
+
+          let current_length = 0;
+          let expected_length;
+          const passThroughRemoteStream = new PassThrough();
+          const proxy = this.getUpLinkForDistFile(name, distFile);
+          const remoteStream = proxy.fetchTarballNext(distFile.url, {});
+
+          remoteStream.on('request', async function () {
+            try {
+              await pipeline(remoteStream, passThroughRemoteStream, { signal });
+            } catch (err: any) {
+              // eslint-disable-next-line no-console
+              console.log('error on pipeline', err);
+            }
+          });
+
+          remoteStream
+            .on('response', async (res) => {
+              if (res.statusCode === HTTP_STATUS.NOT_FOUND) {
+                passThroughRemoteStream.emit(
+                  'error',
+                  errorUtils.getNotFound(errorUtils.API_ERROR.NOT_FILE_UPLINK)
+                );
+                return;
+              }
+
+              if (
+                !(res.statusCode >= HTTP_STATUS.OK && res.statusCode < HTTP_STATUS.MULTIPLE_CHOICES)
+              ) {
+                passThroughRemoteStream.emit(
+                  'error',
+                  errorUtils.getInternalError(`bad uplink status code: ${res.statusCode}`)
+                );
+                return;
+              }
+
+              if (res.headers[HEADER_TYPE.CONTENT_LENGTH]) {
+                expected_length = res.headers[HEADER_TYPE.CONTENT_LENGTH];
+                passThroughRemoteStream.emit(
+                  HEADER_TYPE.CONTENT_LENGTH,
+                  res.headers[HEADER_TYPE.CONTENT_LENGTH]
+                );
+              }
+            })
+            .on('downloadProgress', (progress) => {
+              current_length = progress.transferred;
+              if (typeof expected_length === 'undefined' && progress.total) {
+                expected_length = progress.total;
+              }
+            })
+            .on('end', () => {
+              if (expected_length && current_length != expected_length) {
+                passThroughRemoteStream.emit(
+                  'error',
+                  errorUtils.getInternalError(API_ERROR.CONTENT_MISMATCH)
+                );
+              }
+            })
+            .on('error', (err) => {
+              passThroughRemoteStream.emit('error', err);
+            });
+          return passThroughRemoteStream;
         } else {
-          // we look up at uplinks
-          // we try to fetch the latest tarball url
-          const tarballUrl = manifest._distfiles[filename];
+          // no dist url found, proceed to fetch from upstream
+          // should not be the case
+          const passThroughRemoteStream = new PassThrough();
+          // ensure get the latest data
+          const [updatedManifest] = await this.syncUplinksMetadataNext(name, cachedManifest, {
+            uplinksLook: true,
+          });
+          const distFile = (updatedManifest as Manifest)._distfiles[filename];
 
-          try {
-            const remoteStream = await this.fetchTarllballFromUpstream(name, tarballUrl);
-            return remoteStream;
-          } catch (err: any) {
-            this.logger.error({ err: err.message }, 'some error on uplink getTarballNext @{err}');
-            throw err;
+          if (updatedManifest === null || !distFile) {
+            debug('remote tarball not found');
+            throw errorUtils.getNotFound(API_ERROR.NO_SUCH_FILE);
           }
-        }
 
-        // throw errorUtils.getNotFound(API_ERROR.NO_SUCH_FILE);
+          const proxy = this.getUpLinkForDistFile(name, distFile);
+          const remoteStream = proxy.fetchTarballNext(distFile.url, {});
+          remoteStream.on('response', async () => {
+            try {
+              const storage = this.getPrivatePackageStorage(name);
+              if (proxy.config.cache === true && storage) {
+                debug('cache remote tarball enabled');
+                const localStorageWriteStream = await storage.writeTarballNext(filename, {
+                  signal,
+                });
+                await pipeline(remoteStream, localStorageWriteStream, passThroughRemoteStream, {
+                  signal,
+                });
+              } else {
+                debug('cache remote tarball disabled');
+                await pipeline(remoteStream, passThroughRemoteStream, { signal });
+              }
+            } catch (err) {
+              debug('error on pipeline downloading tarball for package %o', name);
+              passThroughRemoteStream.emit('error', err);
+            }
+          });
+          return passThroughRemoteStream;
+        }
       } else {
         this.logger.error({ err: err.message }, 'some error on fatal @{err}');
         throw err;
@@ -519,51 +612,6 @@ class Storage extends AbstractStorage {
     } else {
       return this.getPackageManifest(options);
     }
-  }
-
-  public async getPackageNext(options: IGetPackageOptionsNext): Promise<[Manifest, any[]]> {
-    const { name } = options;
-    debug('get package for %o', name);
-    let data: Manifest | void;
-
-    try {
-      data = await this.getPackageLocalMetadata(name);
-    } catch (err: any) {
-      // we don't have package locally, so we need to fetch it from uplinks
-      if (err && (!err.status || err.status >= HTTP_STATUS.INTERNAL_ERROR)) {
-        throw err;
-      }
-    }
-
-    // time to sync with uplinks if we have any
-    debug('sync uplinks for %o', name);
-    const [remoteManifest, upLinksErrors] = await this.syncUplinksMetadataNext(
-      name,
-      data as Manifest,
-      {
-        uplinksLook: options.uplinksLook,
-        remoteAddress: options.requestOptions.remoteAddress,
-        // etag??
-      }
-    );
-
-    if (!remoteManifest && typeof data === 'undefined') {
-      throw errorUtils.getNotFound(`${API_ERROR.NOT_PACKAGE_UPLINK}: ${name}`);
-    }
-
-    if (!remoteManifest) {
-      // no data on uplinks
-      return [data as Manifest, upLinksErrors];
-    }
-
-    const normalizedPkg = Object.assign({}, remoteManifest, {
-      // FIXME: clean up  mutation of cleanUpLinksRef
-      ...normalizeDistTags(cleanUpLinksRef(remoteManifest, options.keepUpLinkData)),
-      _attachments: {},
-    });
-
-    debug('no. sync uplinks errors %o for %s', upLinksErrors?.length, name);
-    return [normalizedPkg, upLinksErrors];
   }
 
   /**

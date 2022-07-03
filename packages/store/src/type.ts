@@ -1,3 +1,4 @@
+import { FetchOptions } from '@verdaccio/proxy';
 import { Callback, Config, IPluginStorageFilter, RemoteUser } from '@verdaccio/types';
 import { RequestOptions } from '@verdaccio/url';
 
@@ -16,6 +17,8 @@ export type IGetPackageOptionsNext = {
   version?: string;
   keepUpLinkData?: boolean;
   remoteUser?: RemoteUser;
+  // fetch library retry options (mostly used by unit tests)
+  retry?: FetchOptions['retry'];
   uplinksLook: boolean;
   requestOptions: RequestOptions;
   // indicates to avoid any cache layer
