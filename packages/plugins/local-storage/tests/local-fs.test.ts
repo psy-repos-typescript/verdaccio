@@ -113,7 +113,7 @@ describe('Local FS test', () => {
       });
     });
 
-    describe('deletePackage() group', () => {
+    describe.skip('deletePackage() group', () => {
       test('should delete a package', async () => {
         const localFs = new LocalDriver(path.join(localTempStorage, 'createPackage'), logger);
         await localFs.createPackagNext('createPackage', pkg as unknown as Manifest);
@@ -155,26 +155,74 @@ describe('Local FS test', () => {
   });
 
   describe('readTarballNext', () => {
-    test.only('read a tarball', (done) => {
-      const localFs = new LocalDriver(path.join(__dirname, '__fixtures__/readme-test'), logger);
-      const controller = new AbortController();
+    test('should read a tarball', (done) => {
+      const abort = new AbortController();
+      const localFs = new LocalDriver(
+        path.join(__dirname, '__fixtures__/readme-test-next'),
+        logger
+      );
+      localFs.readTarballNext('test-readme-0.0.0.tgz', { signal: abort.signal }).then((stream) => {
+        stream.on('data', (data) => {
+          expect(data.length).toEqual(352);
+        });
+        stream.on('end', () => {
+          done();
+        });
+      });
+    });
+
+    test('should aboort read a tarball', (done) => {
+      const abort = new AbortController();
+      const localFs = new LocalDriver(
+        path.join(__dirname, '__fixtures__/readme-test-next'),
+        logger
+      );
+      localFs.readTarballNext('test-readme-0.0.0.tgz', { signal: abort.signal }).then((stream) => {
+        stream.on('error', (error: any) => {
+          expect(error.code).toEqual('ABORT_ERR');
+          done();
+        });
+        abort.abort();
+      });
+    });
+
+    test('fails on read a tarball doex not exist', (done) => {
+      const abort = new AbortController();
+
+      const localFs = new LocalDriver(
+        path.join(__dirname, '__fixtures__/readme-test-next'),
+        logger
+      );
       localFs
-        .readTarballNext('test-readme-0.0.0.tgz', { signal: controller.signal })
-        .then((stream: PassThrough) => {
-          stream.on('data', (data) => {
-            expect(data.length).toEqual(352);
-          });
-          stream.on('content-length', (content) => {
-            expect(content).toEqual(352);
-          });
-          stream.on('end', () => {
+        .readTarballNext('does-not-exist-0.0.0.tgz', { signal: abort.signal })
+        .then((stream) => {
+          stream.on('error', (error: any) => {
+            expect(error.code).toEqual('ENOENT');
             done();
           });
         });
     });
+
+    test('should return content-length', (done) => {
+      const localFs = new LocalDriver(
+        path.join(__dirname, '__fixtures__/readme-test-next'),
+        logger
+      );
+      const abort = new AbortController();
+
+      localFs.readTarballNext('test-readme-0.0.0.tgz', { signal: abort.signal }).then((stream) => {
+        stream.on('data', (data) => {
+          expect(data.length).toEqual(352);
+        });
+        stream.on('content-length', (content) => {
+          expect(content).toEqual(352);
+          done();
+        });
+      });
+    });
   });
 
-  describe('readTarball', () => {
+  describe('readTarball (deprecated)', () => {
     test('should read tarball successfully', (done) => {
       const localFs: ILocalPackageManager = new LocalDriver(
         path.join(__dirname, '__fixtures__/readme-test'),

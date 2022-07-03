@@ -4,7 +4,7 @@ import fs from 'fs';
 import _ from 'lodash';
 import path from 'path';
 import sanitzers from 'sanitize-filename';
-import { Readable, Writable } from 'stream';
+import { Readable, Writable, addAbortSignal } from 'stream';
 
 import { VerdaccioError, errorUtils } from '@verdaccio/core';
 import { readFile, readFileNext, unlockFile, unlockFileNext } from '@verdaccio/file-locking';
@@ -530,12 +530,19 @@ export default class LocalFS implements ILocalFSPackageManager {
     return uploadStream;
   }
 
-  public async readTarballNext(pkgName: string): Promise<Readable> {
+  public async readTarballNext(pkgName: string, { signal }): Promise<Readable> {
     const pathName: string = this._getStorage(pkgName);
-    const readStream = fs.createReadStream(pathName);
+    const readStream = addAbortSignal(signal, fs.createReadStream(pathName));
     readStream.on('open', async function (fileDescriptorId: number) {
-      const stats = await fstatPromise(fileDescriptorId);
-      readStream.emit('content-length', stats.size);
+      if (fileDescriptorId) {
+        const stats = await fstatPromise(fileDescriptorId);
+        readStream.emit('content-length', stats.size);
+      } else {
+        readStream.emit('content-length', 0);
+      }
+    });
+    readStream.on('error', (error) => {
+      this.logger.error({ err: error.message, pkgName }, 'error on read tarball for @{pkgName}');
     });
     return readStream;
   }
