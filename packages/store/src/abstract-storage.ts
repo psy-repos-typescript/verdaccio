@@ -563,9 +563,11 @@ class AbstractStorage {
       // once the file descriptor has been closed
       localStorageWriteStream.on('close', async () => {
         try {
+          debug('uploaded tarball %o for %o', filename, pkgName);
           // update the package metadata
           await this.updatePackageNext(pkgName, async (data: Manifest): Promise<Manifest> => {
             const newData: Manifest = { ...data };
+            debug('added _attachment for %o', pkgName);
             newData._attachments[filename] = {
               // TODO:  add integrity hash here
               shasum: shaOneHash.digest('hex'),
@@ -573,10 +575,17 @@ class AbstractStorage {
 
             return newData;
           });
+          debug('emit success for %o', pkgName);
           uploadStream.emit('success');
-        } catch (err) {
+        } catch (err: any) {
           // FUTURE: if the update package fails, remove tarball to avoid left
           // orphan tarballs
+          debug(
+            'something has failed on upload tarball %o for %o : %s',
+            filename,
+            pkgName,
+            err.message
+          );
           uploadStream.emit('error', err);
         }
       });
@@ -878,18 +887,14 @@ class AbstractStorage {
   ): Promise<[Manifest | null, any]> {
     let found = true;
     let syncManifest: Manifest | null = null;
-    const upLinks: Promise<Manifest>[] = [];
+    const upLinks: string[] = [];
     const hasToLookIntoUplinks = _.isNil(options.uplinksLook) || options.uplinksLook;
     debug('is sync uplink enabled %o', hasToLookIntoUplinks);
 
     for (const uplink in this.uplinks) {
       if (hasProxyTo(name, uplink, this.config.packages) && hasToLookIntoUplinks) {
         debug('sync uplink %o', uplink);
-        // we ensure uplink contains at least empty package for the merge
-        const tempManifest = _.isNil(localManifest)
-          ? generatePackageTemplate(name)
-          : { ...localManifest };
-        upLinks.push(this.mergeCacheRemoteMetadata(this.uplinks[uplink], tempManifest, options));
+        upLinks.push(uplink);
       }
     }
 
@@ -901,9 +906,16 @@ class AbstractStorage {
 
     const errors: any[] = [];
     // we resolve uplinks async in serie, first come first serve
-    for (const uplinkRequest of upLinks) {
+    for (const uplink of upLinks) {
       try {
-        syncManifest = (await uplinkRequest) as Manifest;
+        const tempManifest = _.isNil(localManifest)
+          ? generatePackageTemplate(name)
+          : { ...localManifest };
+        syncManifest = (await this.mergeCacheRemoteMetadata(
+          this.uplinks[uplink],
+          tempManifest,
+          options
+        )) as Manifest;
         debug('syncing on uplink %o', syncManifest.name);
         found = true;
         break;

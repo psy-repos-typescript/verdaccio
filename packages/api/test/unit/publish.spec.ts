@@ -1,12 +1,6 @@
 import { API_ERROR, HTTP_STATUS, errorUtils } from '@verdaccio/core';
 
-import {
-  addVersion,
-  publishPackage,
-  removeTarball,
-  unPublishPackage,
-  uploadPackageTarball,
-} from '../../src/publish';
+import { addVersion, publishPackage, removeTarball, unPublishPackage } from '../../src/publish';
 
 const REVISION_MOCK = '15-e53a77096b0ee33e';
 
@@ -67,48 +61,6 @@ describe('Publish endpoints - add a tag', () => {
     addVersion(storage)(req, res, next);
 
     expect(next).toHaveBeenLastCalledWith({ message: 'failure' });
-  });
-});
-
-/**
- * upload package: '/:package/-/:filename/*'
- */
-describe('Publish endpoints - upload package tarball', () => {
-  let req;
-  let res;
-  let next;
-
-  beforeEach(() => {
-    req = {
-      params: {
-        filename: 'verdaccio.gzip',
-        package: 'verdaccio',
-      },
-      pipe: jest.fn(),
-      on: jest.fn(),
-    };
-    res = { status: jest.fn(), locals: { report_error: jest.fn() } };
-    next = jest.fn();
-  });
-
-  test('should upload package tarball successfully', () => {
-    const stream = {
-      done: jest.fn(),
-      abort: jest.fn(),
-      on: jest.fn(() => (status, cb) => cb()),
-    };
-    const storage = {
-      addTarball(packageName, filename) {
-        expect(packageName).toEqual(req.params.package);
-        expect(filename).toEqual(req.params.filename);
-        return stream;
-      },
-    };
-
-    // @ts-ignore
-    uploadPackageTarball(storage)(req, res, next);
-    expect(req.pipe).toHaveBeenCalled();
-    expect(req.on).toHaveBeenCalled();
   });
 });
 

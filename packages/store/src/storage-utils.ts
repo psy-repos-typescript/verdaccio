@@ -16,6 +16,11 @@ export const STORAGE = {
   DEFAULT_REVISION: '0-0000000000000000',
 };
 
+/**
+ * Create a new package in the storage, return a boilerplate package
+ * @param name package name
+ * @returns {Manifest}
+ */
 export function generatePackageTemplate(name: string): Manifest {
   return {
     // standard things

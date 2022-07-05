@@ -207,6 +207,11 @@ class LocalStorage {
 
   /**
     Updates the local cache with the merge from the remote/client manifest.
+
+    The steps are the following.
+    1. Get the latest version of the package from the cache.
+    2. If does not exist will return a 
+
     @param name
     @param remoteManifest
     @returns return a merged manifest.
@@ -218,16 +223,20 @@ class LocalStorage {
     // updating readme
     cacheManifest.readme = getLatestReadme(remoteManifest);
     if (remoteManifest.readme !== cacheManifest.readme) {
+      debug('manifest readme updated for %o', name);
       change = true;
     }
 
-    debug('update versions');
+    debug('updating new remote versions');
     for (const versionId in remoteManifest.versions) {
+      // if detect a new remote version does not exist cache
       if (_.isNil(cacheManifest.versions[versionId])) {
+        debug('new version from upstream %o', versionId);
         let version = remoteManifest.versions[versionId];
 
         // we don't keep readme for package versions,
         // only one readme per package
+        // TODO: readme clean up could be  saved in configured eventually
         version = cleanUpReadme(version);
         debug('clean up readme for %o', versionId);
         version.contributors = normalizeContributors(version.contributors as Author[]);
@@ -237,19 +246,22 @@ class LocalStorage {
 
         if (version?.dist?.tarball) {
           const filename = pkgUtils.extractTarballName(version.dist.tarball);
-
+          // store a fast access to the dist file by tarball name
           // it does NOT overwrite any existing records
           if (_.isNil(cacheManifest?._distfiles[filename])) {
             const hash: DistFile = (cacheManifest._distfiles[filename] = {
               url: version.dist.tarball,
               sha: version.dist.shasum,
             });
+            // store cache metadata this the manifest
             const upLink: string = version[Symbol.for('__verdaccio_uplink')];
             if (_.isNil(upLink) === false) {
               this._updateUplinkToRemoteProtocol(hash, upLink);
             }
           }
         }
+      } else {
+        debug('no new versions from upstream %s', name);
       }
     }
 
@@ -1196,7 +1208,12 @@ class LocalStorage {
   }
 
   /**
-   * Retrieve either a previous created local package or a boilerplate.
+   * Create or read a package.
+   *
+   * If the package already exists, it will be read.
+   * If the package is not found, it will be created.
+   * If the error is anything else will throw an error
+   *
    * @param {*} pkgName
    * @param {*} callback
    * @return {Function}
@@ -1208,7 +1225,7 @@ class LocalStorage {
     }
 
     try {
-      const result: Package = await storage.readPackageNext(pkgName);
+      const result: Manifest = await storage.readPackageNext(pkgName);
       return normalizePackage(result);
     } catch (err: any) {
       if (err.code === STORAGE.NO_SUCH_FILE_ERROR || err.code === HTTP_STATUS.NOT_FOUND) {
@@ -1219,7 +1236,7 @@ class LocalStorage {
     }
   }
 
-  // @deprecated
+  // @deprecated use _createNewPackageNext
   private _createNewPackage(name: string, callback: Callback): Callback {
     return callback(null, normalizePackage(generatePackageTemplate(name)));
   }

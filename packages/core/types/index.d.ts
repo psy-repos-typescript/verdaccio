@@ -213,20 +213,78 @@ declare module '@verdaccio/types' {
     _rev: string;
   }
 
-  interface Manifest {
+  interface PublishManifest {
+    /** 
+     * The `_attachments` object has different usages:
+     * 
+     * - When a package is published, it contains the tarball as an string, this string is used to be
+     * converted as a tarball, usually attached to the package but not stored in the database.
+     * - If user runs `npm star` the _attachments will be at the manifest body but empty.
+     * 
+     * It has also an internal usage:
+     * 
+     * - Used as a cache for the tarball, quick access to the tarball shasum, etc. Instead
+     * iterate versions and find the right one, just using the tarball as a key which is what 
+     * the package manager sends to the registry.
+     * 
+     * - A `_attachments` object is added every time a private tarball is published, upstream cached tarballs are
+     * not being part of this object, only for published private packages.
+     *  
+     * Note: This field is removed when the package is accesed through the web user interface.
+     * */    
+    _attachments: AttachMents;
+  }
+
+  
+  /**
+   * Represents upstream manifest from another registry
+   */
+  interface FullRemoteManifest {
     _id?: string;
+    _rev?: string;
     name: string;
     description?: string;
-    // TODO: not clear what access exactly means
-    access?: any;
     'dist-tags': GenericBody;
     time: GenericBody;
-    readme?: string;
-    users?: PackageUsers;
-    _distfiles: DistFiles;
     versions: Versions;
-    _attachments: AttachMents;
+    maintainers?: Author[];
+    /** store the latest readme **/
+    readme?: string;
+    /** store star assigned to this packages by users */
+    users?: PackageUsers;
+    // TODO: not clear what access exactly means
+    access?: any;
+    bugs?: {url: string};
+    license?: string;
+    homepage?: string;
+    repository?: string | {type?: string; url: string, directory?: string};
+    keywords?: string[];
+
+  }
+
+  interface Manifest extends FullRemoteManifest, PublishManifest {
+    // private fields only used by verdaccio  
+    /** 
+     * store fast access to the dist url of an specific tarball, instead search version
+     * by id, just the tarball id is faster.
+     * 
+     * The _distfiles is created only when a package is being sync from an upstream.
+     * also used to fetch tarballs from upstream, the private publish tarballs are not stored in 
+     * this object because they are not published in the upstream registry.
+     */
+    _distfiles: DistFiles;    
+    /**
+     * Store access cache metadata, to avoid to fetch the same metadata multiple times.
+     * 
+     * The key represents the uplink id which is composed of a etag and a fetched timestamp.
+     * 
+     * The fetched timestamp is the time when the metadata was fetched, used to avoid to fetch the
+     * same metadata until the metadata is older than the last fetch.
+     */
     _uplinks: UpLinks;
+    /**
+     * store the revision of the manifest
+     */
     _rev: string;
   }
 

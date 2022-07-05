@@ -216,13 +216,27 @@ class Storage extends AbstractStorage {
       const proxy = this.getUpLinkForDistFile(name, distFile);
       const remoteStream = proxy.fetchTarballNext(distFile.url, {});
 
-      remoteStream.on('request', async function () {
+      remoteStream.on('request', async () => {
         try {
           debug('remote stream request');
-          await pipeline(remoteStream, passThroughRemoteStream, { signal });
+          const storage = this.getPrivatePackageStorage(name) as any;
+          if (proxy.config.cache === true && storage) {
+            const localStorageWriteStream = await storage.writeTarballNext(filename, {
+              signal,
+            });
+
+            await pipeline(remoteStream, passThroughRemoteStream, localStorageWriteStream, {
+              signal,
+            });
+          } else {
+            await pipeline(remoteStream, passThroughRemoteStream, {
+              signal,
+            });
+          }
         } catch (err: any) {
-          // eslint-disable-next-line no-console
-          console.log('error on pipeline', err);
+          console.log('err', err);
+          debug('error on pipeline downloading tarball for package %o', name);
+          passThroughRemoteStream.emit('error', err);
         }
       });
 
@@ -312,6 +326,7 @@ class Storage extends AbstractStorage {
             await pipeline(remoteStream, passThroughRemoteStream, { signal });
           }
         } catch (err) {
+          console.log('err', err);
           debug('error on pipeline downloading tarball for package %o', name);
           passThroughRemoteStream.emit('error', err);
         }
