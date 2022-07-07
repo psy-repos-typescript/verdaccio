@@ -550,10 +550,7 @@ export default class LocalFS implements ILocalFSPackageManager {
       }
     });
     readStream.on('error', (error) => {
-      this.logger.error(
-        { err: error.message, tarballName },
-        'error on read tarball for @{pkgName}'
-      );
+      debug('not tarball found %o for %s message %s', pathName, tarballName, error.message);
     });
     return readStream;
   }

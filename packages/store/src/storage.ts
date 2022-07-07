@@ -200,7 +200,12 @@ class Storage extends AbstractStorage {
   }
 
   private async getTarballFromUpstream(name: string, filename: string, { signal }) {
-    const cachedManifest: Manifest = await this.getPackageLocalMetadata(name);
+    let cachedManifest: Manifest | null = null;
+    try {
+      cachedManifest = await this.getPackageLocalMetadata(name);
+    } catch (err) {
+      debug('error on get package local metadata %o', err);
+    }
     // dist url should be on local cache metadata
     if (
       cachedManifest?._distfiles &&

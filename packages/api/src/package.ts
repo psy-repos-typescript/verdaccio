@@ -10,27 +10,6 @@ import { $NextFunctionVer, $RequestExtend, $ResponseExtend } from '../types/cust
 
 const debug = buildDebug('verdaccio:api:package');
 
-const downloadStream = (
-  packageName: string,
-  filename: string,
-  storage: any,
-  _req: $RequestExtend,
-  res: $ResponseExtend
-): void => {
-  const stream = storage.getTarball(packageName, filename);
-
-  stream.on('content-length', function (content): void {
-    res.header('Content-Length', content);
-  });
-
-  stream.on('error', function (err): void {
-    return res.locals.report_error(err);
-  });
-
-  res.header(HEADERS.CONTENT_TYPE, HEADERS.OCTET_STREAM);
-  stream.pipe(res);
-};
-
 export default function (route: Router, auth: IAuth, storage: Storage): void {
   const can = allow(auth);
 
@@ -80,26 +59,8 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
     }
   );
 
-  // route.get(
-  //   '/:scopedPackage/-/:scope/:filename',
-  //   can('access'),
-  //   function (req: $RequestExtend, res: $ResponseExtend): void {
-  //     const { scopedPackage, filename } = req.params;
-
-  //     downloadStream(scopedPackage, filename, storage, req, res);
-  //   }
-  // );
-
   route.get(
-    '/:package/-/:filename',
-    can('access'),
-    function (req: $RequestExtend, res: $ResponseExtend): void {
-      downloadStream(req.params.package, req.params.filename, storage, req, res);
-    }
-  );
-
-  route.get(
-    '/new/:pkg/-/:filename',
+    '/:scopedPackage/-/:scope/:filename',
     can('access'),
     async function (req: $RequestExtend, res: $ResponseExtend, next): Promise<void> {
       const { pkg, filename } = req.params;
@@ -130,7 +91,49 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
         //   // abort.abort();
         //   next(err);
         // });
+        res.header(HEADERS.CONTENT_TYPE, HEADERS.OCTET_STREAM);
+        stream.pipe(res);
+      } catch (err: any) {
+        // console.log('catch API error request', err);
+        res.locals.report_error(err);
+        next(err);
+      }
+    }
+  );
 
+  route.get(
+    '/:pkg/-/:filename',
+    can('access'),
+    async function (req: $RequestExtend, res: $ResponseExtend, next): Promise<void> {
+      const { pkg, filename } = req.params;
+      const abort = new AbortController();
+      try {
+        const stream = (await storage.getTarballNext(pkg, filename, {
+          signal: abort.signal,
+          // enableRemote: true,
+        })) as any;
+
+        stream.on('content-length', (size) => {
+          res.header(HEADER_TYPE.CONTENT_LENGTH, size);
+        });
+
+        stream.once('error', (err) => {
+          res.locals.report_error(err);
+          next(err);
+        });
+
+        // req.on('close', () => {
+        //   debug('close new tarball stream');
+        //   abort.abort();
+        // });
+
+        // // TODO: review if this is need it
+        // res.once('error', (err) => {
+        //   debug('error on new tarball stream');
+        //   // abort.abort();
+        //   next(err);
+        // });
+        res.header(HEADERS.CONTENT_TYPE, HEADERS.OCTET_STREAM);
         stream.pipe(res);
       } catch (err: any) {
         // console.log('catch API error request', err);

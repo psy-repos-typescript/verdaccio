@@ -12,7 +12,10 @@ import {
   generatePackageMetadata,
   generatePublishNewVersionManifest,
 } from '@verdaccio/test-helper';
-import { generateRemotePackageMetadata } from '@verdaccio/test-helper/build/generatePackageMetadata';
+import {
+  generateLocalPackageMetadata,
+  generateRemotePackageMetadata,
+} from '@verdaccio/test-helper/build/generatePackageMetadata';
 import { Manifest } from '@verdaccio/types';
 
 import { Storage } from '../src';
@@ -74,16 +77,65 @@ describe('storage', () => {
       });
     });
 
+    test('should create a package if tarball is requested and does not exist locally', (done) => {
+      const pkgName = 'upstream';
+      const upstreamManifest = generateRemotePackageMetadata(
+        pkgName,
+        '1.0.0',
+        'https://registry.something.org'
+      );
+      nock('https://registry.verdaccio.org').get(`/${pkgName}`).reply(201, upstreamManifest);
+      nock('https://registry.something.org')
+        .get(`/${pkgName}/-/${pkgName}-1.0.0.tgz`)
+        // types does not match here with documentation
+        // @ts-expect-error
+        .replyWithFile(201, path.join(__dirname, 'fixtures/tarball.tgz'), {
+          [HEADER_TYPE.CONTENT_LENGTH]: 277,
+        });
+      const config = new Config(
+        configExample(
+          {
+            storage: generateRamdonStorage(),
+          },
+          './fixtures/config/getTarballNext-getupstream.yaml',
+          __dirname
+        )
+      );
+      const storage = new Storage(config);
+      storage.init(config).then(() => {
+        const abort = new AbortController();
+        storage
+          .getTarballNext(pkgName, `${pkgName}-1.0.0.tgz`, {
+            signal: abort.signal,
+          })
+          .then((stream) => {
+            stream.on('data', (dat) => {
+              expect(dat).toBeDefined();
+            });
+            stream.on('end', () => {
+              done();
+            });
+            stream.on('error', (e) => {
+              console.error('error', e);
+              done('this should not happen');
+            });
+          });
+      });
+    });
+
     test('should serve fetch tarball from upstream without dist info local', (done) => {
       const pkgName = 'upstream';
-      const upstreamManifest = addNewVersion(generatePackageMetadata(pkgName, '1.0.0'), '1.0.1');
+      const upstreamManifest = addNewVersion(
+        generateRemotePackageMetadata(pkgName, '1.0.0'),
+        '1.0.1'
+      );
       nock('https://registry.verdaccio.org').get(`/${pkgName}`).reply(201, upstreamManifest);
       nock('http://localhost:5555')
         .get(`/${pkgName}/-/${pkgName}-1.0.1.tgz`)
         // types does not match here with documentation
         // @ts-expect-error
         .replyWithFile(201, path.join(__dirname, 'fixtures/tarball.tgz'), {
-          [HEADER_TYPE.CONTENT_LENGTH]: 0,
+          [HEADER_TYPE.CONTENT_LENGTH]: 277,
         });
       const config = new Config(
         configExample(
