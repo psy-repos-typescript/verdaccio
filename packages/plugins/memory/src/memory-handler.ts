@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import buildDebug from 'debug';
 import { fs } from 'memfs';
 import { Stats } from 'memfs/lib/Stats';

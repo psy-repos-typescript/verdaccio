@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { PassThrough, Readable } from 'stream';
+import { Readable } from 'stream';
 
 import { createTempFolder } from '@verdaccio/test-helper';
 import { ILocalPackageManager, Logger, Manifest, Package } from '@verdaccio/types';

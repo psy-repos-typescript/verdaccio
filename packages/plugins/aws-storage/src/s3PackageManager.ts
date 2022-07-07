@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { AWSError, S3 } from 'aws-sdk';
 import { HttpError } from 'http-errors';
 import { PassThrough, Writable } from 'stream';

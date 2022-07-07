@@ -239,7 +239,6 @@ class Storage extends AbstractStorage {
             });
           }
         } catch (err: any) {
-          console.log('err', err);
           debug('error on pipeline downloading tarball for package %o', name);
           passThroughRemoteStream.emit('error', err);
         }
@@ -331,7 +330,6 @@ class Storage extends AbstractStorage {
             await pipeline(remoteStream, passThroughRemoteStream, { signal });
           }
         } catch (err) {
-          console.log('err', err);
           debug('error on pipeline downloading tarball for package %o', name);
           passThroughRemoteStream.emit('error', err);
         }

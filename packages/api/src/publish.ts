@@ -166,23 +166,6 @@ export default function publish(
   );
 }
 
-export function unPublishVersions(storage: Storage) {
-  return async function (req: $RequestExtend, res: $ResponseExtend, next: $NextFunctionVer) {
-    const packageName = req.params.package;
-
-    logger.debug({ packageName }, `unpublishing versions for @{packageName}`);
-    try {
-      // await storage.updateManifest(packageName);
-    } catch (err) {
-      if (err) {
-        return next(err);
-      }
-    }
-    res.status(HTTP_STATUS.CREATED);
-    return next({ ok: 'ds' });
-  };
-}
-
 export function publishPackageNext(storage: Storage): any {
   return async function (
     req: $RequestExtend,

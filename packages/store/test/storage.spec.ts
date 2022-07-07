@@ -1,4 +1,3 @@
-import fs from 'fs';
 import nock from 'nock';
 import * as httpMocks from 'node-mocks-http';
 import path from 'path';
@@ -7,22 +6,12 @@ import { Config } from '@verdaccio/config';
 import { API_ERROR, DIST_TAGS, HEADERS, HEADER_TYPE, errorUtils } from '@verdaccio/core';
 import { setup } from '@verdaccio/logger';
 import { configExample, generateRamdonStorage } from '@verdaccio/mock';
-import {
-  addNewVersion,
-  generatePackageMetadata,
-  generatePublishNewVersionManifest,
-} from '@verdaccio/test-helper';
-import {
-  generateLocalPackageMetadata,
-  generateRemotePackageMetadata,
-} from '@verdaccio/test-helper/build/generatePackageMetadata';
+import { addNewVersion, generatePackageMetadata } from '@verdaccio/test-helper';
+import { generateRemotePackageMetadata } from '@verdaccio/test-helper/build/generatePackageMetadata';
 import { Manifest } from '@verdaccio/types';
 
 import { Storage } from '../src';
 import manifestFooRemoteNpmjs from './fixtures/manifests/foo-npmjs.json';
-import { addPackageToStore } from './helpers';
-
-// import manifestFooRemoteVerdaccio from './fixtures/manifests/foo-verdaccio.json';
 
 setup({ type: 'stdout', format: 'pretty', level: 'trace' });
 
@@ -115,8 +104,7 @@ describe('storage', () => {
             stream.on('end', () => {
               done();
             });
-            stream.on('error', (e) => {
-              console.error('error', e);
+            stream.on('error', () => {
               done('this should not happen');
             });
           });
@@ -244,7 +232,7 @@ describe('storage', () => {
                 stream.on('end', () => {
                   done();
                 });
-                stream.once('error', (e) => {
+                stream.once('error', () => {
                   done('this should not happen');
                 });
               });

@@ -80,17 +80,11 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
           next(err);
         });
 
-        // req.on('close', () => {
-        //   debug('close new tarball stream');
-        //   abort.abort();
-        // });
+        req.on('abort', () => {
+          debug('request aborted for %o', req.url);
+          abort.abort();
+        });
 
-        // // TODO: review if this is need it
-        // res.once('error', (err) => {
-        //   debug('error on new tarball stream');
-        //   // abort.abort();
-        //   next(err);
-        // });
         res.header(HEADERS.CONTENT_TYPE, HEADERS.OCTET_STREAM);
         stream.pipe(res);
       } catch (err: any) {
@@ -122,17 +116,11 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
           next(err);
         });
 
-        // req.on('close', () => {
-        //   debug('close new tarball stream');
-        //   abort.abort();
-        // });
+        req.on('abort', () => {
+          debug('request aborted for %o', req.url);
+          abort.abort();
+        });
 
-        // // TODO: review if this is need it
-        // res.once('error', (err) => {
-        //   debug('error on new tarball stream');
-        //   // abort.abort();
-        //   next(err);
-        // });
         res.header(HEADERS.CONTENT_TYPE, HEADERS.OCTET_STREAM);
         stream.pipe(res);
       } catch (err: any) {

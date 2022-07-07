@@ -1,7 +1,7 @@
 import assert from 'assert';
 import buildDebug from 'debug';
 import _ from 'lodash';
-import { PassThrough, Readable } from 'stream';
+import { PassThrough } from 'stream';
 import { default as URL } from 'url';
 
 import { errorUtils, pkgUtils, pluginUtils, searchUtils, validatioUtils } from '@verdaccio/core';

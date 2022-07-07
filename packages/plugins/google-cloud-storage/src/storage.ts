@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { DownloadResponse, File } from '@google-cloud/storage';
 import { Response } from 'request';
 import { PassThrough, Readable, Writable } from 'stream';
