@@ -1,6 +1,6 @@
 {
   "name": "@verdaccio/types",
-  "version": "11.0.0-6-next.16",
+  "version": "13.0.0-next-8.2",
   "description": "verdaccio types definitions",
   "keywords": [
     "private",
@@ -17,8 +17,7 @@
   "license": "MIT",
   "homepage": "https://verdaccio.org",
   "engines": {
-    "node": ">=14",
-    "npm": ">=6"
+    "node": ">=18"
   },
   "repository": {
     "type": "https",
@@ -31,19 +30,17 @@
   "publishConfig": {
     "access": "public"
   },
-  "main": "build/types.d.ts",
-  "types": "build/types.d.ts",
+  "main": "src/types.ts",
+  "types": "src/types.ts",
   "scripts": {
     "clean": "rimraf ./build",
     "test": "pnpm type-check",
-    "build:docs": "typedoc --options ./typedoc.json --excludeExternals --tsconfig tsconfig.build.json",
+    "build:docs": "typedoc --options ./typedoc.json --tsconfig tsconfig.build.json",
     "type-check": "tsc --noEmit -p tsconfig.build.json",
-    "build": "tsc --emitDeclarationOnly -p tsconfig.build.json"
+    "build": "echo 0"
   },
   "devDependencies": {
-    "@types/node": "16.11.59",
-    "typedoc": "beta",
-    "typedoc-plugin-missing-exports": "1.0.0"
+    "typedoc": "0.23.25"
   },
   "typedoc": {
     "entryPoint": "./src/types.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@verdaccio/tarball",
-  "version": "11.0.0-6-next.16",
+  "version": "13.0.0-next-8.7",
   "description": "tarball utilities resolver",
   "keywords": [
     "private",
@@ -19,13 +19,12 @@
   "license": "MIT",
   "homepage": "https://verdaccio.org",
   "engines": {
-    "node": ">=14",
-    "npm": ">=6"
+    "node": ">=18"
   },
   "repository": {
     "type": "https",
     "url": "https://github.com/verdaccio/verdaccio",
-    "directory": "packages/core/url-resolver"
+    "directory": "packages/core/tarball"
   },
   "bugs": {
     "url": "https://github.com/verdaccio/verdaccio/issues"
@@ -34,19 +33,21 @@
     "access": "public"
   },
   "dependencies": {
-    "debug": "4.3.4",
-    "@verdaccio/core": "workspace:6.0.0-6-next.47",
-    "@verdaccio/url": "workspace:11.0.0-6-next.13",
-    "@verdaccio/utils": "workspace:6.0.0-6-next.15",
-    "lodash": "4.17.21"
+    "@verdaccio/core": "workspace:8.0.0-next-8.7",
+    "@verdaccio/url": "workspace:13.0.0-next-8.7",
+    "@verdaccio/utils": "workspace:8.1.0-next-8.7",
+    "debug": "4.4.0",
+    "gunzip-maybe": "^1.4.2",
+    "lodash": "4.17.21",
+    "tar-stream": "^3.1.7"
   },
   "devDependencies": {
-    "@verdaccio/types": "workspace:11.0.0-6-next.16",
-    "node-mocks-http": "1.11.0"
+    "@verdaccio/types": "workspace:13.0.0-next-8.2",
+    "node-mocks-http": "1.14.1"
   },
   "scripts": {
     "clean": "rimraf ./build",
-    "test": "jest",
+    "test": "vitest run",
     "type-check": "tsc --noEmit -p tsconfig.build.json",
     "build:types": "tsc --emitDeclarationOnly -p tsconfig.build.json",
     "build:js": "babel src/ --out-dir build/ --copy-files --extensions \".ts,.tsx\" --source-maps",

@@ -2,15 +2,7 @@
 
 ## Supported versions
 
-The following table describes the versions of this project that are currently supported with security updates:
-
-| Version   | Supported          |
-| --------- | ------------------ |
-| 2.x       | :x:                |
-| 3.x       | :x:                |
-| 4.x       | :x:                |
-| 5.x       | :white_check_mark: |
-| 6.x alpha | :x:                |
+You can find details about the supported versions of Verdaccio in the [version history](https://github.com/verdaccio/verdaccio/blob/master/VERSIONS.md).
 
 ## Responsible disclosure security policy
 
@@ -28,13 +20,13 @@ At Verdaccio, we consider the security of our systems a top priority. But no mat
 
 If you discover a security vulnerability, please use one of the following means of communications to report it to us:
 
-- Report the security issue to the Node.js Security WG through the [HackerOne program](https://hackerone.com/nodejs-ecosystem) for ecosystem modules on npm, or to [Snyk Security Team](https://snyk.io/vulnerability-disclosure). They will help triage the security issue and work with all involved parties to remediate and release a fix.
+- Report the security issue to [Snyk Security Team](https://snyk.io/vulnerability-disclosure). They will help triage the security issue and work with all involved parties to remediate and release a fix.
 
 Note that time-frame and processes are subject to each program’s own policy.
 
 - Report the security issue to the project maintainers directly at verdaccio@pm.me. If the report contains highly sensitive information, please be advised to encrypt your findings using our [PGP key](https://cdn.verdaccio.dev/gpg/publickey.verdaccio@pm.me.asc) which is also available in this document.
 
-Your efforts to responsibly disclose your findings are sincerely appreciated and will be taken into account to acknowledge your contributions.
+Your efforts to responsibly disclose your findings are sincerely appreciated. There isn't a security bounty program available, but any security contributions will be duly acknowledged to recognize your valuable input.
 
 ## PGP key
 

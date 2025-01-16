@@ -1,6 +1,7 @@
 import buildDebug from 'debug';
+import type { IncomingHttpHeaders } from 'node:http';
 import { URL } from 'url';
-import isURLValidator from 'validator/lib/isURL';
+import validator from 'validator';
 
 import { HEADERS } from '@verdaccio/core';
 
@@ -17,7 +18,7 @@ export function isURLhasValidProtocol(uri: string): boolean {
 }
 
 export function isHost(url: string = '', options = {}): boolean {
-  return isURLValidator(url, {
+  return validator.isURL(url, {
     require_host: true,
     allow_trailing_dot: false,
     require_valid_protocol: false,
@@ -31,7 +32,7 @@ export function isHost(url: string = '', options = {}): boolean {
 /**
  * Detect running protocol (http or https)
  */
-export function getWebProtocol(headerProtocol: string | void, protocol: string): string {
+export function getWebProtocol(headerProtocol: string | undefined, protocol: string): string {
   let returnProtocol;
   const [, defaultProtocol] = validProtocols;
   // HAProxy variant might return http,http with X-Forwarded-Proto
@@ -90,10 +91,23 @@ export function validateURL(publicUrl: string | void) {
 }
 
 export type RequestOptions = {
+  /**
+   * Request host.
+   */
   host: string;
+  /**
+   * Request protocol.
+   */
   protocol: string;
-  headers: { [key: string]: string };
+  /**
+   * Request headers.
+   */
+  headers: IncomingHttpHeaders;
   remoteAddress?: string;
+  /**
+   * Logged username the request, usually after token verification.
+   */
+  username?: string;
 };
 
 export function getPublicUrl(url_prefix: string = '', requestOptions: RequestOptions): string {
@@ -106,10 +120,20 @@ export function getPublicUrl(url_prefix: string = '', requestOptions: RequestOpt
     if (!isHost(host)) {
       throw new Error('invalid host');
     }
-    const protoHeader =
+
+    // 'X-Forwarded-Proto' is the default header
+    const protoHeader: string =
       process.env.VERDACCIO_FORWARDED_PROTO?.toLocaleLowerCase() ??
       HEADERS.FORWARDED_PROTO.toLowerCase();
-    const protocol = getWebProtocol(requestOptions.headers[protoHeader], requestOptions.protocol);
+    const forwardedProtocolHeaderValue = requestOptions.headers[protoHeader];
+
+    if (Array.isArray(forwardedProtocolHeaderValue)) {
+      // This really should never happen - only set-cookie is allowed to have
+      // multiple values.
+      throw new Error('invalid forwarded protocol header value. Reading header ' + protoHeader);
+    }
+
+    const protocol = getWebProtocol(forwardedProtocolHeaderValue, requestOptions.protocol);
     const combinedUrl = combineBaseUrl(protocol, host, url_prefix);
     debug('public url by request %o', combinedUrl);
     return combinedUrl;
@@ -117,3 +141,5 @@ export function getPublicUrl(url_prefix: string = '', requestOptions: RequestOpt
     return '/';
   }
 }
+
+export const isURL = validator.isURL;

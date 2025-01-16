@@ -1,5 +1,6 @@
 import path from 'path';
 import supertest from 'supertest';
+import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 
 import { HEADERS, HEADER_TYPE, HTTP_STATUS } from '@verdaccio/core';
 import { setup } from '@verdaccio/logger';
@@ -8,10 +9,10 @@ import { publishVersion } from '@verdaccio/test-helper';
 import { NOT_README_FOUND } from '../src/api/readme';
 import { initializeServer } from './helper';
 
-setup([]);
+setup({});
 
-const mockManifest = jest.fn();
-jest.mock('@verdaccio/ui-theme', () => mockManifest());
+const mockManifest = vi.fn();
+vi.mock('@verdaccio/ui-theme', () => mockManifest());
 
 describe('readme api', () => {
   beforeAll(() => {
@@ -25,7 +26,7 @@ describe('readme api', () => {
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     mockManifest.mockClear();
   });
 
@@ -71,5 +72,34 @@ describe('readme api', () => {
       .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.TEXT_PLAIN_UTF8)
       .expect(HTTP_STATUS.OK);
     expect(response.text).toMatch(NOT_README_FOUND);
+  });
+
+  test('should fetch readme with keeping all readmes (latest)', async () => {
+    const app = await initializeServer('keep-all-readmes.yaml');
+    await publishVersion(app, 'pk1-test', '1.0.0', { readme: 'my readme' });
+    const response = await supertest(app)
+      .get('/-/verdaccio/data/package/readme/pk1-test')
+      .set('Accept', HEADERS.TEXT_PLAIN)
+      .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.TEXT_PLAIN_UTF8)
+      .expect(HTTP_STATUS.OK);
+    expect(response.text).toMatch('my readme');
+  });
+
+  test('should fetch readme with keeping all readmes (version)', async () => {
+    const app = await initializeServer('keep-all-readmes.yaml');
+    await publishVersion(app, 'pk1-test', '1.0.0', { readme: 'my readme' });
+    await publishVersion(app, 'pk1-test', '1.2.0', { readme: 'my new readme' });
+    const response = await supertest(app)
+      .get('/-/verdaccio/data/package/readme/pk1-test')
+      .set('Accept', HEADERS.TEXT_PLAIN)
+      .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.TEXT_PLAIN_UTF8)
+      .expect(HTTP_STATUS.OK);
+    expect(response.text).toMatch('my new readme');
+    const response2 = await supertest(app)
+      .get('/-/verdaccio/data/package/readme/pk1-test?v=1.0.0')
+      .set('Accept', HEADERS.TEXT_PLAIN)
+      .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.TEXT_PLAIN_UTF8)
+      .expect(HTTP_STATUS.OK);
+    expect(response2.text).toMatch('my readme');
   });
 });

@@ -1,19 +1,22 @@
 // import LRU from 'lru-cache';
 import buildDebug from 'debug';
 import _ from 'lodash';
+import low from 'lowdb';
+import FileAsync from 'lowdb/adapters/FileAsync';
+import FileMemory from 'lowdb/adapters/Memory';
 import path from 'path';
 
 import { errorUtils, fileUtils, pluginUtils, searchUtils } from '@verdaccio/core';
-import { Config, IPackageStorage, LocalStorage, Logger } from '@verdaccio/types';
+import { Config, Logger, Token, TokenFilter } from '@verdaccio/types';
 import { getMatchedPackagesSpec } from '@verdaccio/utils';
 
 import { searchOnStorage } from './dir-utils';
 import { mkdirPromise, writeFilePromise } from './fs';
 import LocalDriver, { noSuchFile } from './local-fs';
-import { loadPrivatePackages } from './pkg-utils';
-import TokenActions from './token';
+import { LocalStorage, loadPrivatePackages } from './pkg-utils';
 import { _dbGenPath } from './utils';
 
+const TOKEN_DB_NAME = '.token-db.json';
 const DB_NAME = process.env.VERDACCIO_STORAGE_NAME ?? fileUtils.Files.DatabaseName;
 
 const debug = buildDebug('verdaccio:plugin:local-storage');
@@ -21,18 +24,21 @@ const debug = buildDebug('verdaccio:plugin:local-storage');
 export const ERROR_DB_LOCKED =
   'Database is locked, please check error message printed during startup to prevent data loss';
 
-type IPluginStorage = pluginUtils.IPluginStorage<{}>;
+type Storage = pluginUtils.Storage<{}>;
 
-class LocalDatabase extends TokenActions implements IPluginStorage {
+class LocalDatabase extends pluginUtils.Plugin<{}> implements Storage {
   private readonly path: string;
   private readonly logger: Logger;
   public readonly config: Config;
   public readonly storages: Map<string, string>;
   public data: LocalStorage | undefined;
   public locked: boolean;
+  public tokenDb: low.LowdbAsync<any> | null;
 
   public constructor(config: Config, logger: Logger) {
-    super(config);
+    // TODO: fix double config
+    super(config, { config, logger });
+    this.tokenDb = null;
     this.config = config;
     this.logger = logger;
     this.locked = false;
@@ -40,7 +46,7 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
     debug('config path %o', config.configPath);
     this.path = _dbGenPath(DB_NAME, config);
     this.storages = this._getCustomPackageLocalStorages();
-    this.logger.info({ path: this.path }, 'local storage path @{path}');
+    this.logger.info({ path: this.path }, 'local storage path: @{path}');
     debug('plugin storage path %o', this.path);
   }
 
@@ -112,7 +118,9 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
   public async filterByQuery(results: searchUtils.SearchItemPkg[], query: searchUtils.SearchQuery) {
     // FUTURE: apply new filters, keyword, version, ...
     return results.filter((item: searchUtils.SearchItemPkg) => {
-      return item?.name?.match(query.text) !== null;
+      // Sanitize user input
+      const safeText = _.escapeRegExp(query.text);
+      return item?.name?.match(safeText) !== null;
     }) as searchUtils.SearchItemPkg[];
   }
 
@@ -130,13 +138,17 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
     });
   }
 
+  /**
+   *
+   * @param query
+   * @returns
+   */
   public async search(query: searchUtils.SearchQuery): Promise<searchUtils.SearchItem[]> {
+    debug('search query to %o', query.text);
     const results: searchUtils.SearchItem[] = [];
     const storagePath = this.getStoragePath();
-    const packagesOnStorage = await this.filterByQuery(
-      await searchOnStorage(storagePath, this.storages),
-      query
-    );
+    const localResults = await searchOnStorage(storagePath, this.storages);
+    const packagesOnStorage = await this.filterByQuery(localResults, query);
     debug('packages found %o', packagesOnStorage.length);
     for (let storage of packagesOnStorage) {
       // check if package is listed on the cache private database
@@ -183,7 +195,7 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
     return Promise.resolve(list);
   }
 
-  public getPackageStorage(packageName: string): IPackageStorage {
+  public getPackageStorage(packageName: string): pluginUtils.StorageHandler {
     const packageAccess = getMatchedPackagesSpec(packageName, this.config.packages);
 
     const packagePath: string = this._getLocalStoragePath(
@@ -192,7 +204,7 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
     debug('storage path selected: ', packagePath);
     if (_.isString(packagePath) === false) {
       debug('the package %o has no storage defined ', packageName);
-      return;
+      throw errorUtils.getInternalError('storage not found or implemented');
     }
 
     const packageStoragePath: string = path.join(
@@ -277,7 +289,7 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
     } catch (err: any) {
       // readFileSync is platform specific, macOS, Linux and Windows thrown an error
       // Only recreate if file not found to prevent data loss
-      this.logger.warn(
+      this.logger.info(
         { path: this.path },
         'no private database found, recreating new one on @{path}'
       );
@@ -291,6 +303,65 @@ class LocalDatabase extends TokenActions implements IPluginStorage {
       // if no database is found we set empty placeholders
       return { list: [], secret: '' };
     }
+  }
+
+  private async getTokenDb(): Promise<low.LowdbAsync<any>> {
+    if (!this.tokenDb) {
+      debug('token database is not defined');
+      let adapter;
+      if (process.env.NODE_ENV === 'test') {
+        debug('token memory adapter');
+        adapter = new FileMemory('');
+      } else {
+        debug('token async adapter');
+        const pathDb = _dbGenPath(TOKEN_DB_NAME, this.config);
+        adapter = new FileAsync(pathDb);
+      }
+      debug('token bd generated');
+      this.tokenDb = await low(adapter);
+    }
+
+    return this.tokenDb;
+  }
+
+  public async saveToken(token: Token): Promise<void> {
+    debug('token key %o', token.key);
+    const db = await this.getTokenDb();
+    const userData = await db.get(token.user).value();
+    debug('user data %o', userData);
+    if (_.isNil(userData)) {
+      await db.set(token.user, [token]).write();
+      debug('token user %o new database', token.user);
+    } else {
+      // types does not match with valid implementation
+      // @ts-ignore
+      await db.get(token.user).push(token).write();
+    }
+    debug('data %o', await db.getState());
+    debug('token saved %o', token.user);
+  }
+
+  public async deleteToken(user: string, tokenKey: string): Promise<void> {
+    const db = await this.getTokenDb();
+    const userTokens = await db.get(user).value();
+    if (_.isNil(userTokens)) {
+      throw new Error('user not found');
+    }
+    debug('tokens %o - %o', userTokens, userTokens.length);
+    const remainingTokens = userTokens.filter(({ key }) => {
+      debug('key %o', key);
+      return key !== tokenKey;
+    });
+    await db.set(user, remainingTokens).write();
+    debug('removed tokens key %o', tokenKey);
+  }
+
+  public async readTokens(filter: TokenFilter): Promise<Token[]> {
+    const { user } = filter;
+    debug('read tokens with %o', user);
+    const db = await this.getTokenDb();
+    const tokens = await db.get(user).value();
+    return tokens || [];
   }
 }
 

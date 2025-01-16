@@ -1,7 +1,7 @@
 import { Response, Router } from 'express';
 import _ from 'lodash';
 
-import { IAuth } from '@verdaccio/auth';
+import { Auth } from '@verdaccio/auth';
 import {
   API_ERROR,
   APP_ERROR,
@@ -10,6 +10,8 @@ import {
   errorUtils,
   validatioUtils,
 } from '@verdaccio/core';
+import { PROFILE_API_ENDPOINTS } from '@verdaccio/middleware';
+import { rateLimit } from '@verdaccio/middleware';
 import { Config } from '@verdaccio/types';
 
 import { $NextFunctionVer, $RequestExtend } from '../../types/custom';
@@ -25,7 +27,7 @@ export interface Profile {
   fullname: string;
 }
 
-export default function (route: Router, auth: IAuth, config: Config): void {
+export default function (route: Router, auth: Auth, config: Config): void {
   function buildProfile(name: string): Profile {
     return {
       tfa: false,
@@ -40,7 +42,8 @@ export default function (route: Router, auth: IAuth, config: Config): void {
   }
 
   route.get(
-    '/-/npm/v1/user',
+    PROFILE_API_ENDPOINTS.get_profile,
+    rateLimit(config?.userRateLimit),
     function (req: $RequestExtend, res: Response, next: $NextFunctionVer): void {
       if (_.isNil(req.remote_user.name) === false) {
         return next(buildProfile(req.remote_user.name));
@@ -54,7 +57,8 @@ export default function (route: Router, auth: IAuth, config: Config): void {
   );
 
   route.post(
-    '/-/npm/v1/user',
+    PROFILE_API_ENDPOINTS.get_profile,
+    rateLimit(config?.userRateLimit),
     function (req: $RequestExtend, res: Response, next: $NextFunctionVer): void {
       if (_.isNil(req.remote_user.name)) {
         res.status(HTTP_STATUS.UNAUTHORIZED);
@@ -78,15 +82,17 @@ export default function (route: Router, auth: IAuth, config: Config): void {
           /* eslint new-cap:off */
         }
 
+        if (_.isEmpty(password.old)) {
+          return next(errorUtils.getBadRequest('old password is required'));
+        }
+
         auth.changePassword(
           name,
           password.old,
           password.new,
           (err, isUpdated): $NextFunctionVer => {
             if (_.isNull(err) === false) {
-              return next(
-                errorUtils.getCode(err.status, err.message) || errorUtils.getConflict(err.message)
-              );
+              return next(errorUtils.getForbidden(err.message));
             }
 
             if (isUpdated) {

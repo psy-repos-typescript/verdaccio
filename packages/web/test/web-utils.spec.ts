@@ -1,4 +1,6 @@
-import { sortByName } from '../src/utils/web-utils';
+import { describe, expect, test } from 'vitest';
+
+import { sortByName } from '../src/web-utils';
 
 describe('Utilities', () => {
   describe('Sort packages', () => {

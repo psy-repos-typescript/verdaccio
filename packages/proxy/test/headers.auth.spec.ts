@@ -1,11 +1,25 @@
+import { describe, expect, test, vi } from 'vitest';
+
 import { DEFAULT_REGISTRY } from '@verdaccio/config';
 import { HEADERS, TOKEN_BASIC, TOKEN_BEARER, constants } from '@verdaccio/core';
-import { setup } from '@verdaccio/logger';
+import { Logger } from '@verdaccio/types';
 import { buildToken } from '@verdaccio/utils';
 
 import { ProxyStorage } from '../src';
 
-setup();
+const mockDebug = vi.fn();
+const mockInfo = vi.fn();
+const mockHttp = vi.fn();
+const mockError = vi.fn();
+const mockWarn = vi.fn();
+
+const logger = {
+  debug: mockDebug,
+  info: mockInfo,
+  http: mockHttp,
+  error: mockError,
+  warn: mockWarn,
+} as unknown as Logger;
 
 function createUplink(config) {
   const defaultConfig = {
@@ -13,12 +27,12 @@ function createUplink(config) {
   };
   const mergeConfig = Object.assign({}, defaultConfig, config);
   // @ts-ignore
-  return new ProxyStorage(mergeConfig, {});
+  return new ProxyStorage(mergeConfig, {}, logger);
 }
 
 function setHeadersNext(config: unknown = {}, headers: any = {}) {
   const uplink = createUplink(config);
-  return uplink.getHeadersNext({ ...headers });
+  return uplink.getHeaders({ ...headers });
 }
 
 describe('setHeadersNext', () => {

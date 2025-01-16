@@ -1,17 +1,18 @@
 import nock from 'nock';
 import path from 'path';
+import { beforeEach, describe, test, vi } from 'vitest';
 
 import { Config, parseConfigFile } from '@verdaccio/config';
-import { setup } from '@verdaccio/logger';
+import { logger, setup } from '@verdaccio/logger';
 
 import { ProxyStorage } from '../src';
 
-setup();
+setup({});
 
 const getConf = (name) => path.join(__dirname, '/conf', name);
 
 // // mock to get the headers fixed value
-jest.mock('crypto', () => {
+vi.mock('crypto', () => {
   return {
     randomBytes: (): { toString: () => string } => {
       return {
@@ -30,7 +31,7 @@ describe('tarball proxy', () => {
   beforeEach(() => {
     nock.cleanAll();
     nock.abortPendingRequests();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
   const defaultRequestOptions = {
     url: 'https://registry.verdaccio.org',
@@ -39,42 +40,45 @@ describe('tarball proxy', () => {
   const proxyPath = getConf('proxy1.yaml');
   const conf = new Config(parseConfigFile(proxyPath));
 
-  describe('fetchTarballNext', () => {
-    test('get file tarball fetch', (done) => {
-      nock('https://registry.verdaccio.org')
-        .get('/jquery/-/jquery-0.0.1.tgz')
-        .replyWithFile(201, path.join(__dirname, 'partials/jquery-0.0.1.tgz'));
-      const prox1 = new ProxyStorage(defaultRequestOptions, conf);
-      const stream = prox1.fetchTarballNext(
-        'https://registry.verdaccio.org/jquery/-/jquery-0.0.1.tgz',
-        {}
-      );
-      stream.on('response', () => {
-        done();
-      });
-      stream.on('error', (err) => {
-        done(err);
-      });
-    });
+  describe('fetchTarball', () => {
+    test('get file tarball fetch', () =>
+      new Promise((done) => {
+        nock('https://registry.verdaccio.org')
+          .get('/jquery/-/jquery-0.0.1.tgz')
+          .replyWithFile(201, path.join(__dirname, 'partials/jquery-0.0.1.tgz'));
+        const prox1 = new ProxyStorage(defaultRequestOptions, conf, logger);
+        const stream = prox1.fetchTarball(
+          'https://registry.verdaccio.org/jquery/-/jquery-0.0.1.tgz',
+          // @ts-expect-error
+          {}
+        );
+        stream.on('response', () => {
+          done(true);
+        });
+        stream.on('error', (err) => {
+          done(err);
+        });
+      }));
 
-    test.skip('get file tarball handle retries', (done) => {
-      nock('https://registry.verdaccio.org')
-        .get('/jquery/-/jquery-0.0.1.tgz')
-        .twice()
-        .reply(500, 'some-text')
-        .get('/jquery/-/jquery-0.0.1.tgz')
-        .once()
-        .replyWithFile(201, path.join(__dirname, 'partials/jquery-0.0.1.tgz'));
-      const prox1 = new ProxyStorage(defaultRequestOptions, conf);
-      const stream = prox1.fetchTarballNext(
-        'https://registry.verdaccio.org/jquery/-/jquery-0.0.1.tgz',
-        { retry: { limit: 2 } }
-      );
-      stream.on('error', () => {
-        // FIXME: stream should have handle 2 retry
-        done();
-      });
-    });
+    test.skip('get file tarball handle retries', () =>
+      new Promise((done) => {
+        nock('https://registry.verdaccio.org')
+          .get('/jquery/-/jquery-0.0.1.tgz')
+          .twice()
+          .reply(500, 'some-text')
+          .get('/jquery/-/jquery-0.0.1.tgz')
+          .once()
+          .replyWithFile(201, path.join(__dirname, 'partials/jquery-0.0.1.tgz'));
+        const prox1 = new ProxyStorage(defaultRequestOptions, conf);
+        const stream = prox1.fetchTarball(
+          'https://registry.verdaccio.org/jquery/-/jquery-0.0.1.tgz',
+          { retry: { limit: 2 } }
+        );
+        stream.on('error', () => {
+          // FIXME: stream should have handle 2 retry
+          done();
+        });
+      }));
   });
 });
 //     test('get file tarball correct content-length', (done) => {

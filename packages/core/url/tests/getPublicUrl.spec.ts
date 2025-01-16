@@ -1,4 +1,5 @@
 import * as httpMocks from 'node-mocks-http';
+import { describe, expect, test } from 'vitest';
 
 import { HEADERS } from '@verdaccio/core';
 
@@ -102,7 +103,7 @@ describe('host', () => {
     });
 
     expect(
-      getPublicUrl(null, {
+      getPublicUrl(undefined, {
         host: req.hostname,
         headers: req.headers as any,
         protocol: req.protocol,
@@ -293,6 +294,52 @@ describe('env variable', () => {
       })
     ).toEqual('http://some.com/');
     delete process.env.VERDACCIO_PUBLIC_URL;
+  });
+
+  test('with the VERDACCIO_FORWARDED_PROTO undefined', () => {
+    process.env.VERDACCIO_FORWARDED_PROTO = undefined;
+    const req = httpMocks.createRequest({
+      method: 'GET',
+      headers: {
+        host: 'some.com',
+        [HEADERS.FORWARDED_PROTO]: 'https',
+      },
+      url: '/',
+    });
+
+    expect(
+      getPublicUrl('/test/', {
+        host: req.hostname,
+        headers: req.headers as any,
+        protocol: req.protocol,
+      })
+    ).toEqual('http://some.com/test/');
+    delete process.env.VERDACCIO_FORWARDED_PROTO;
+  });
+
+  test('with the VERDACCIO_FORWARDED_PROTO environment variable set to "set-cookie"', () => {
+    process.env.VERDACCIO_FORWARDED_PROTO = 'set-cookie';
+    const req = httpMocks.createRequest({
+      method: 'GET',
+      headers: {
+        host: 'some.com',
+        cookie: 'name=value; name2=value2;',
+        'set-cookie': [
+          'cookieName1=value; expires=Tue, 19 Jan 2038 03:14:07 GMT;',
+          'cookieName2=value; expires=Tue, 19 Jan 2038 03:14:07 GMT;',
+        ],
+      },
+      url: '/',
+    });
+
+    expect(() =>
+      getPublicUrl('/test/', {
+        host: req.hostname,
+        headers: req.headers as any,
+        protocol: req.protocol,
+      })
+    ).toThrow('invalid forwarded protocol header value. Reading header set-cookie');
+    delete process.env.VERDACCIO_FORWARDED_PROTO;
   });
 
   test('with a invalid X-Forwarded-Proto https and host injection with invalid host', () => {

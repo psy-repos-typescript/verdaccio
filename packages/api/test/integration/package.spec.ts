@@ -1,4 +1,5 @@
 import supertest from 'supertest';
+import { beforeEach, describe, expect, test } from 'vitest';
 
 import { DIST_TAGS, HEADERS, HEADER_TYPE, HTTP_STATUS } from '@verdaccio/core';
 import { Storage } from '@verdaccio/store';
@@ -26,16 +27,17 @@ describe('package', () => {
     });
 
     test.each([
-      ['foo', 'foo-1.0.0.tgz'],
-      ['@scope/foo', 'foo-1.0.0.tgz'],
+      ['foo2', 'foo2-1.0.0.tgz'],
+      ['@scope/foo2', 'foo2-1.0.0.tgz'],
     ])('should fails if tarball does not exist', async (pkg, fileName) => {
       await publishVersion(app, pkg, '1.0.1');
-      return await supertest(app)
+      await supertest(app)
         .get(`/${pkg}/-/${fileName}`)
         .set(HEADERS.ACCEPT, HEADERS.JSON)
         .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.OCTET_STREAM)
         .expect(HTTP_STATUS.NOT_FOUND);
     });
+
     test.todo('check content length file header');
     test.todo('fails on file was aborted');
   });
@@ -96,8 +98,8 @@ describe('package', () => {
         expect(response.body.time).toBeDefined();
         expect(response.body.modified).toBeDefined();
         expect(response.body[DIST_TAGS]).toEqual({ latest: '1.0.0' });
-        expect(response.body.readme).not.toBeDefined();
-        expect(response.body._rev).not.toBeDefined();
+        expect(response.body.readme).toBeDefined();
+        expect(response.body._rev).toBeDefined();
         expect(response.body.users).not.toBeDefined();
       }
     );

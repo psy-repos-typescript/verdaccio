@@ -3,7 +3,7 @@ import createError, { HttpError } from 'http-errors';
 import { HTTP_STATUS } from './constants';
 
 export const API_ERROR = {
-  PASSWORD_SHORT: `The provided password does not pass the validation`,
+  PASSWORD_SHORT: 'The provided password does not pass the validation',
   MUST_BE_LOGGED: 'You must be logged in to publish packages.',
   PLUGIN_ERROR: 'bug in the auth plugin system',
   CONFIG_BAD_FORMAT: 'config file must be an object',
@@ -29,6 +29,7 @@ export const API_ERROR = {
   REGISTRATION_DISABLED: 'user registration disabled',
   UNAUTHORIZED_ACCESS: 'unauthorized access',
   BAD_STATUS_CODE: 'bad status code',
+  SERVER_TIME_OUT: 'looks like the server is taking to long to respond',
   PACKAGE_EXIST: 'this package is already present',
   BAD_AUTH_HEADER: 'bad authorization header',
   WEB_DISABLED: 'Web interface is disabled in the config file',
@@ -38,6 +39,7 @@ export const API_ERROR = {
   BAD_PACKAGE_DATA: 'bad incoming package data',
   USERNAME_PASSWORD_REQUIRED: 'username and password is required',
   USERNAME_ALREADY_REGISTERED: 'username is already registered',
+  USERNAME_MISMATCH: 'username does not match logged in user',
 };
 
 export const SUPPORT_ERRORS = {

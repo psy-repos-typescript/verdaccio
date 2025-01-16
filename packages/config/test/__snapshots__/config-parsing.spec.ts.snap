@@ -1,12 +1,12 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`parse fromJStoYAML basic conversion roundtrip 1`] = `
+exports[`parse > fromJStoYAML > basic conversion roundtrip 1`] = `
 "storage: ./storage_default_storage
 uplinks:
   npmjs:
     url: http://localhost:4873/
 packages:
-  "@*/*":
+  '@*/*':
     access: $all
     publish: $all
     proxy: npmjs
@@ -32,7 +32,7 @@ packages:
     access: $authenticated
     publish: $authenticated
     proxy: npmjs
-  "*":
+  '*':
     access: $all
     publish: $all
     proxy: npmjs

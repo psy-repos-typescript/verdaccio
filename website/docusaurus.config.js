@@ -1,31 +1,99 @@
 // @ts-check
 
-const isDeployPreview = process.env.CONTEXT === "deploy-preview";
-const isProductionDeployment = process.env.CONTEXT === "production";
+const { translationsData } = require('@verdaccio/local-scripts');
+const translations = translationsData;
 
-const localesWithLowRatioOfTranslation = ["ar-SA", "fil-PH", "gl-ES", "hi-IN", "ja-JP", "ko-KR", "pt-PT", "sr-SP", "tg-TJ", "ro-RO", "zh-CN"];
-/** @type {import('@docusaurus/types').DocusaurusConfig['i18n']} */
+const lgnMapping = {
+  'de-DE': 'de',
+  'pl-PL': 'pl',
+  'cs-CZ': 'cs',
+  // 'ga-IE': 'ga-IE',
+  'fr-FR': 'fr',
+  'it-IT': 'it',
+  'ru-RU': 'ru',
+  'vi-VN': 'vi',
+  'yo-NG': 'yo',
+};
+
+// @ts-ignore
+const progress = translations;
+const limitLngIncluded = 80;
+console.log('limit translation is on %s%', limitLngIncluded);
+
+const { themes } = require('prism-react-renderer');
+const lightTheme = themes.github;
+const darkTheme = themes.dracula;
+
+const isProductionDeployment = process.env.CONTEXT === 'production';
+const filterByProgress = (items) => {
+  const originLng = Object.keys(translations);
+  return items.filter((lgn) => {
+    if (lgn === 'en') {
+      return true;
+    }
+    const _lgn = lgnMapping[lgn] ? lgnMapping[lgn] : lgn;
+    if (!originLng.includes(_lgn)) {
+      console.log(`language ${_lgn} excluded, does not exist in origin`);
+      return false;
+    }
+
+    // console.log('_lgn', _lgn);
+    // console.log('translations---->', translations[_lgn]);
+    if (translations[_lgn].translationProgress <= limitLngIncluded) {
+      console.log(
+        'language %s is being excluded due does not met limit of translation, current: %s%',
+        _lgn,
+        translations[_lgn].approvalProgress
+      );
+      return false;
+    }
+
+    return true;
+  });
+};
+
+const locales = filterByProgress([
+  'en',
+  'cs-CZ',
+  'de-DE',
+  'es-ES',
+  'fr-FR',
+  'it-IT',
+  // 'ga-IE',
+  'pl-PL',
+  'pt-BR',
+  'ru-RU',
+  'sr-CS',
+  'vi-VN',
+  'yo-NG',
+  'zh-TW',
+  'zh-CN',
+]);
+
+console.log('locales', locales);
+
 const i18nConfig = {
   defaultLocale: 'en',
-  locales: isDeployPreview ? ['en'] : [
-    "en", "cs-CZ", "de-DE",
-    "es-ES", "fr-FR",
-    "it-IT", "pl-PL",
-    "pt-BR", "ru-RU",
-    "sr-CS", "vi-VN",
-    "yo-NG", "zh-TW",
-    "zh-CN"
-  ],
+  locales,
   localeConfigs: {
-    ar: {
-      direction: 'rtl'
-    }
-  }
-}
+    en: { label: 'English' },
+    'it-IT': { label: `Italiano (${progress['it'].translationProgress}%)` },
+    'es-ES': { label: `Español (${progress['es-ES'].translationProgress}%)` },
+    'de-DE': { label: `Deutsch (${progress['de'].translationProgress}%)` },
+    // 'ga-IE': { label: `Gaeilge (Éire) (${progress['ga-IE'].translationProgress}%)` },
+    'cs-CZ': { label: `Čeština (Česko) (${progress['cs'].translationProgress}%)` },
+    'fr-FR': { label: `Français (${progress['fr'].translationProgress}%)` },
+    'pl-PL': { label: `Polski (Polska) (${progress['pl'].translationProgress}%)` },
+    'pt-BR': { label: `Português (Brasil) (${progress['pt-BR'].translationProgress}%)` },
+    'ru-RU': { label: `Русский (Россия) (${progress['ru'].translationProgress}%)` },
+    'zh-CN': { label: `中文（中国）(${progress['zh-CN'].translationProgress}%)` },
+    'zh-TW': { label: `中文（台灣）(${progress['zh-TW'].translationProgress}%)` },
+    'yo-NG': { label: `Èdè Yorùbá (Nàìjíríà) (${progress['yo'].translationProgress}%)` },
+    'sr-CS': { label: `Српски (Србија) (${progress['sr-CS'].translationProgress}%)` },
+    'vi-VN': { label: `Tiếng Việt (Việt Nam) (${progress['vi'].translationProgress}%)` },
+  },
+};
 
-const pkgJson = require('./package.json')
-
-/** @type {import('@docusaurus/types').DocusaurusConfig} */
 module.exports = {
   title: 'Verdaccio',
   tagline: 'A lightweight Node.js private proxy registry',
@@ -35,43 +103,69 @@ module.exports = {
   baseUrl: '/',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
-  favicon: "img/logo/uk/verdaccio-tiny-uk-no-bg.svg",
+  onBrokenAnchors: 'warn',
+  favicon: 'img/logo/uk/verdaccio-tiny-uk-no-bg.svg',
   i18n: i18nConfig,
-  scripts: [
-    "https://buttons.github.io/buttons.js",    
-  ],
+  scripts: ['https://buttons.github.io/buttons.js'],
   plugins: [
     'docusaurus-plugin-sass',
-    "docusaurus-plugin-contributors",
-    isProductionDeployment && ['docusaurus-plugin-sentry', { DSN: 'a7bc89ee3f284570b1d9a47e600e7597' }]
-  ].filter(Boolean),
-  webpack: {
-    jsLoader: (isServer) => ({
-      loader: require.resolve('esbuild-loader'),
-      options: {
-        loader: 'tsx',
-        format: isServer ? 'cjs' : undefined,
-        target: isServer ? 'node12' : 'es2017',
+    'docusaurus-plugin-contributors',
+    'docusaurus-plugin-downloads',
+    [
+      'content-docs',
+      {
+        id: 'community',
+        path: 'community',
+        routeBasePath: 'community',
+        sidebarPath: require.resolve('./sidebarsCommunity.js'),
+        showLastUpdateTime: true,
       },
-    }),
+    ],
+    [
+      'content-docs',
+      {
+        id: 'dev',
+        path: 'dev',
+        routeBasePath: 'dev',
+        sidebarPath: require.resolve('./sidebarsDev.js'),
+        showLastUpdateTime: true,
+      },
+    ],
+    [
+      'content-docs',
+      {
+        id: 'talks',
+        path: 'talks',
+        routeBasePath: 'talks',
+        sidebarPath: require.resolve('./sidebarsTalk.js'),
+        showLastUpdateTime: true,
+      },
+    ],
+  ],
+  markdown: {
+    mermaid: true,
   },
+  themes: ['@docusaurus/theme-mermaid'],
   customFields: {
-    description: 'A lightweight Node.js private proxy registry'
+    description: 'A lightweight Node.js private proxy registry',
   },
   themeConfig: {
+    mermaid: {
+      theme: { light: 'neutral', dark: 'forest' },
+    },
     announcementBar: {
       id: 'announcementBar',
       content:
-        '<a target="_blank" rel="noopener noreferrer" href="https://www.wfp.org/support-us/stories/ukraine-appeal">Help provide humanitarian support to Ukraine refugees</a>!',
-        isCloseable: false,
-        backgroundColor: '#1595de',
-        textColor: '#ffffff',
+        '<a target="_blank" rel="noopener noreferrer" href="https://u24.gov.ua">OFFICIAL FUNDRAISING PLATFORM OF UKRAINE</a>!',
+      isCloseable: false,
+      backgroundColor: '#1595de',
+      textColor: '#ffffff',
     },
     algolia: {
       appId: 'B3TG5CBF5H',
       apiKey: 'ed054733cb03418e9af25b7beb82c924',
       indexName: 'verdaccio',
-      contextualSearch: true
+      contextualSearch: true,
     },
     docs: {
       sidebar: {
@@ -80,10 +174,10 @@ module.exports = {
       },
     },
     navbar: {
-      title: `Verdaccio - v${pkgJson.version}`,
+      title: `Verdaccio`,
       logo: {
         alt: 'Verdaccio Logo',
-        src: "img/logo/uk/verdaccio-tiny-uk-no-bg.svg",
+        src: 'img/logo/uk/verdaccio-tiny-uk-no-bg.svg',
       },
       items: [
         {
@@ -92,22 +186,31 @@ module.exports = {
           position: 'left',
           label: 'Docs',
         },
+        {
+          type: 'doc',
+          docId: 'api/node-api/index',
+          position: 'left',
+          label: 'API',
+        },
         { to: '/blog', label: 'Blog', position: 'left' },
-        { to: '/help', label: 'Help', position: 'left' },        
+        {
+          type: 'docsVersionDropdown',
+          position: 'right',
+        },
         {
           href: 'https://opencollective.com/verdaccio',
           label: 'Sponsor us',
           position: 'right',
         },
         {
-          href: 'https://www.youtube.com/channel/UC5i20v6o7lSjXzAHOvatt0w',
-          label: 'YouTube',
-          position: 'right',
+          href: '/community',
+          label: 'Community',
+          position: 'left',
         },
         {
-          href: '/contributors',
-          label: 'Contributors',
-          position: 'right',
+          href: '/talks',
+          label: 'Video Talks',
+          position: 'left',
         },
         {
           type: 'localeDropdown',
@@ -124,6 +227,12 @@ module.exports = {
           position: 'right',
           className: 'header-github-link',
           'aria-label': 'GitHub repository',
+        },
+        {
+          href: 'https://bsky.app/profile/verdaccio.org',
+          position: 'right',
+          className: 'header-bluesky-link',
+          'aria-label': 'Follow us at Bluesky',
         },
       ],
     },
@@ -163,8 +272,11 @@ module.exports = {
               href: 'https://discord.gg/7qWJxBf',
             },
             {
-              label: 'Twitter',
-              href: 'https://twitter.com/verdaccio_npm',
+              html: `
+              <a href="https://bsky.app/profile/verdaccio.org" rel="me">
+                Blyesky
+              </a>
+              `,
             },
           ],
         },
@@ -180,8 +292,8 @@ module.exports = {
               href: 'https://github.com/verdaccio/verdaccio',
             },
             {
-              label: 'Twitter',
-              href: 'https://twitter.com/verdaccio_npm',
+              label: 'Bluesky',
+              href: 'https://bsky.app/profile/verdaccio.org',
             },
             {
               html: `
@@ -194,15 +306,15 @@ module.exports = {
         },
       ],
       copyright: `Copyright © ${new Date().getFullYear()} Verdaccio community. Built with Docusaurus.`,
-    },    
+    },
     colorMode: {
       defaultMode: 'light',
       disableSwitch: false,
       respectPrefersColorScheme: true,
     },
     prism: {
-      theme: require('prism-react-renderer/themes/github'),
-      darkTheme: require('prism-react-renderer/themes/nightOwl'),
+      theme: lightTheme,
+      darkTheme: darkTheme,
     },
   },
   presets: [
@@ -214,22 +326,29 @@ module.exports = {
           showLastUpdateAuthor: true,
           showLastUpdateTime: true,
           sidebarCollapsible: true,
-          remarkPlugins: [
-            [require('@docusaurus/remark-plugin-npm2yarn'), {sync: true}],
-          ],
+          remarkPlugins: [[require('@docusaurus/remark-plugin-npm2yarn'), { sync: true }]],
           editUrl: ({ locale, docPath }) => {
             if (locale !== 'en') {
               return `https://crowdin.com/project/verdaccio/${locale}`;
             }
             return `https://github.com/verdaccio/verdaccio/edit/master/website/docs/${docPath}`;
           },
+          lastVersion: '6.x',
+          versions: {
+            '6.x': {
+              label: `6.x`,
+            },
+          },
         },
         googleAnalytics: {
-          trackingID: 'UA-2527438-21'
+          trackingID: 'G-PCYM9FYJZT',
+        },
+        gtag: {
+          trackingID: 'G-PCYM9FYJZT',
         },
         blog: {
           blogTitle: 'Verdaccio Official Blog',
-          blogDescription: 'The official Verdaccio NPM proxy registry blog',
+          blogDescription: 'The official Verdaccio Node.js proxy registry blog',
           showReadingTime: true,
           postsPerPage: 3,
           feedOptions: {

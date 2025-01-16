@@ -1,23 +1,45 @@
 {
-  "extends": ["config:base", "schedule:earlyMondays", "helpers:pinGitHubActionDigests"],
-  "prConcurrentLimit": 1,
+  "extends": ["config:base", "helpers:pinGitHubActionDigests"],
+  "prConcurrentLimit": 8,
   "ignorePaths": ["docker-examples/**"],
+  "schedule": ["before 3:00am on the 3 day of the month"],
   "ignoreDeps": [
+    "customprefix-auth",
     "eslint-plugin-verdaccio",
     "@verdaccio/test-helper",
     "docker/setup-buildx-action",
     "docker/login-action",
     "docker/build-push-action",
     "crazy-max/ghaction-docker-meta",
-    "pnpm"
+    "pnpm",
+    "yarn",
+    "npm",
+    "@yarnpkg/cli-dist"
   ],
-  "baseBranches": ["master", "5.x"],
-  "major": false,
+  "baseBranches": ["master", "6.x", "7.x"],
+  "semanticCommitType": "fix",
+  "major": true,
   "labels": ["bot: dependencies"],
   "packageRules": [
     {
+      "packageNames": ["actions/*", "github/codeql-action/*"],
+      "groupName": "all actions",
+      "groupSlug": "github-actions",
+      "schedule": ["every 4 month"]
+    },
+    {
       "packageNames": ["aws-sdk"],
       "allowedVersions": "2.607.0"
+    },
+    {
+      "packageNames": ["@verdaccio/local-storage"],
+      "allowedVersions": "^10.3.4",
+      "matchBaseBranches": ["7.x"]
+    },
+    {
+      "packageNames": ["@emotion/*"],
+      "matchFileNames": ["./package.json", "./packages/**/package.json"],
+      "matchBaseBranches": ["master"]
     },
     {
       "packageNames": ["got"],
@@ -36,10 +58,6 @@
       "allowedVersions": "4.5.0"
     },
     {
-      "packageNames": ["@docusaurus/*"],
-      "allowedVersions": "2.0.0-beta.14"
-    },
-    {
       "packageNames": ["@google-cloud/storage"],
       "allowedVersions": "3.5.0"
     },
@@ -48,24 +66,12 @@
       "allowedVersions": "1.0.7"
     },
     {
-      "packageNames": ["esbuild"],
-      "allowedVersions": "0.14.10"
-    },
-    {
-      "packageNames": ["esbuild-loader"],
-      "allowedVersions": "2.16.0"
-    },
-    {
       "packageNames": ["lowdb"],
       "allowedVersions": "1.0.0"
     },
     {
       "packageNames": ["node-fetch"],
       "allowedVersions": "< 3.0.0"
-    },
-    {
-      "packageNames": ["@changesets/cli"],
-      "allowedVersions": "2.15.0"
     },
     {
       "matchDatasources": ["docker"],
@@ -97,45 +103,16 @@
     },
     {
       "matchPackagePatterns": [
-        "@types/*",
-        "typescript",
-        "@babel/*",
-        "fast-safe-stringify",
-        "undici",
-        "webpack",
-        "memfs",
-        "globby",
-        "pnpm",
-        "esbuild",
-        "@emotion/*",
-        "@mui/*",
-        "express*",
-        "http-status",
-        "babel-*",
-        "jest",
-        "jest-*",
-        "pino",
-        "react*",
-        "ts-node",
-        "mini-css*",
-        "autocannon",
-        "process-warning",
-        "fastify",
-        "core-js",
-        "debug",
-        "nock",
-        "rimraf",
-        "node-fetch",
-        "kleur",
-        "fs-extra",
-        "self-signed",
-        "supertest"
+        "@verdaccio/*",
+        "verdaccio-audit",
+        "verdaccio-htpasswd",
+        "verdaccio-auth-memory",
+        "verdaccio-memory"
       ],
       "matchUpdateTypes": ["minor", "patch", "major"],
-      "groupName": "all core dependencies",
-      "groupSlug": "all-core-dependencies",
-      "extends": [":semanticCommitTypeAll(fix)"],
-      "baseBranchList": ["master"]
+      "groupName": "core verdaccio dependencies",
+      "groupSlug": "all-verdaccio",
+      "baseBranchList": ["6.x", "7.x"]
     },
     {
       "matchPackagePatterns": [
@@ -149,7 +126,39 @@
       "matchUpdateTypes": ["minor", "patch", "major"],
       "groupName": "all linting dependencies",
       "groupSlug": "all-linting",
+      "baseBranchList": ["master", "6.x", "7.x"]
+    },
+    {
+      "matchPackagePatterns": [
+        "webpack",
+        "css-loader",
+        "eslint-loader",
+        "file-loader",
+        "sass-loader",
+        "url-loader",
+        "styles-loader",
+        "source-map-loader",
+        "babel-loader",
+        "webpack-*"
+      ],
+      "matchUpdateTypes": ["minor", "patch", "major"],
+      "groupName": "all build dependencies",
+      "groupSlug": "all-build",
       "baseBranchList": ["master"]
+    },
+    {
+      "matchPackagePatterns": ["@testing-library/*", "vitest", "supertest", "nock"],
+      "matchUpdateTypes": ["minor", "patch", "major"],
+      "groupName": "all test dependencies",
+      "groupSlug": "all-test",
+      "baseBranchList": ["master", "6.x", "7.x"]
+    },
+    {
+      "matchPackagePatterns": ["@type/*", "typescript"],
+      "matchUpdateTypes": ["minor", "patch", "major"],
+      "groupName": "typescript dependencies",
+      "groupSlug": "all-types",
+      "baseBranchList": ["master", "6.x", "7.x"]
     }
   ],
   "pinVersions": false

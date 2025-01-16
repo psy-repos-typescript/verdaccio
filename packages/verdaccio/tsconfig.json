@@ -14,22 +14,13 @@
       "path": "../cli"
     },
     {
-      "path": "../config"
-    },
-    {
-      "path": "../core/htpasswd"
-    },
-    {
-      "path": "../tools/helper"
+      "path": "../plugins/htpasswd"
     },
     {
       "path": "../hooks"
     },
     {
-      "path": "../logger"
-    },
-    {
-      "path": "../mock"
+      "path": "../logger/logger"
     },
     {
       "path": "../node-api"

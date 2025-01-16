@@ -1,15 +1,18 @@
 import buildDebug from 'debug';
 import { Router } from 'express';
 
-import { IAuth } from '@verdaccio/auth';
+import { Auth } from '@verdaccio/auth';
 import { DIST_TAGS, HTTP_STATUS } from '@verdaccio/core';
+import { logger } from '@verdaccio/logger';
 import { $NextFunctionVer, $RequestExtend, $ResponseExtend, allow } from '@verdaccio/middleware';
+// Was required by other packages
+import { WebUrls } from '@verdaccio/middleware';
 import { Storage } from '@verdaccio/store';
 import { convertDistRemoteToLocalTarballUrls } from '@verdaccio/tarball';
 import { Config, Manifest, Version } from '@verdaccio/types';
 import { addGravatarSupport, formatAuthor, isVersionValid } from '@verdaccio/utils';
 
-import { AuthorAvatar, addScope, deleteProperties } from '../utils/web-utils';
+import { AuthorAvatar, addScope, deleteProperties } from '../web-utils';
 
 export { $RequestExtend, $ResponseExtend, $NextFunctionVer }; // Was required by other packages
 
@@ -18,22 +21,25 @@ export type PackageExt = Manifest & { author: AuthorAvatar; dist?: { tarball: st
 export type $SidebarPackage = Manifest & { latest: Version };
 const debug = buildDebug('verdaccio:web:api:sidebar');
 
-function addSidebarWebApi(config: Config, storage: Storage, auth: IAuth): Router {
+function addSidebarWebApi(config: Config, storage: Storage, auth: Auth): Router {
   debug('initialized sidebar web api');
   const router = Router(); /* eslint new-cap: 0 */
-  const can = allow(auth);
-  // Get package readme
+  const can = allow(auth, {
+    beforeAll: (a, b) => logger.trace(a, b),
+    afterAll: (a, b) => logger.trace(a, b),
+  });
+  // Get package sidebar
   router.get(
-    '/sidebar/(@:scope/)?:package',
+    [WebUrls.sidebar_scopped_package, WebUrls.sidebar_package],
     can('access'),
     async function (
       req: $RequestExtend,
       res: $ResponseExtend,
       next: $NextFunctionVer
     ): Promise<void> {
-      const name: string = req.params.scope
-        ? addScope(req.params.scope, req.params.package)
-        : req.params.package;
+      const rawScope = req.params.scope; // May include '@'
+      const scope = rawScope ? rawScope.slice(1) : null; // Remove '@' if present
+      const name: string = scope ? addScope(scope, req.params.package) : req.params.package;
       const requestOptions = {
         protocol: req.protocol,
         headers: req.headers as any,

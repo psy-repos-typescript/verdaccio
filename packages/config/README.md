@@ -1,71 +1,73 @@
 # @verdaccio/config
 
-[![backers](https://opencollective.com/verdaccio/tiers/backer/badge.svg?label=Backer&color=brightgreen)](https://opencollective.com/verdaccio)
-[![stackshare](https://img.shields.io/badge/Follow%20on-StackShare-blue.svg?logo=stackshare&style=flat)](https://stackshare.io/verdaccio)
-[![MIT](https://img.shields.io/github/license/mashape/apistatus.svg)](https://github.com/verdaccio/verdaccio/blob/master/LICENSE)
-[![Crowdin](https://d322cqt584bo4o.cloudfront.net/verdaccio/localized.svg)](https://crowdin.com/project/verdaccio)
-[![TODOs](https://badgen.net/https/api.tickgit.com/badgen/github.com/verdaccio/verdaccio)](https://www.tickgit.com/browse?repo=github.com/verdaccio/verdaccio)
+## Overview
 
-[![Twitter followers](https://img.shields.io/twitter/follow/verdaccio_npm.svg?style=social&label=Follow)](https://twitter.com/verdaccio_npm)
-[![Github](https://img.shields.io/github/stars/verdaccio/verdaccio.svg?style=social&label=Stars)](https://github.com/verdaccio/verdaccio/stargazers)
+The `@verdaccio/config` package provides a powerful configuration builder constructor for programmatically creating configuration objects for Verdaccio, a lightweight private npm proxy registry. With this package, users can easily manage various configuration aspects such as package access, uplinks, security settings, authentication, logging, and storage options.
 
-## Donations
+## Installation
 
-Verdaccio is run by **volunteers**; nobody is working full-time on it. If you find this project to be useful and would like to support its development, consider making a donation - **your logo might end up in this readme.** 😉
+You can install via npm:
 
-**[Donate](https://opencollective.com/verdaccio)** 💵👍🏻 starting from _\$1/month_ or just one single contribution.
+```bash
+npm install @verdaccio/config
+```
 
-## Report a vulnerability
+## Usage
 
-If you want to report a security vulnerability, please follow the steps which we have defined for you in our [security policy](https://github.com/verdaccio/verdaccio/security/policy).
+To start using `@verdaccio/config`, import the `ConfigBuilder` class and begin constructing your configuration object:
 
-## Open Collective Sponsors
+## `ConfigBuilder` constructor
 
-Support this project by becoming a sponsor. Your logo will show up here with a link to your website. [[Become a sponsor](https://opencollective.com/verdaccio#sponsor)]
+The `ConfigBuilder` class is a helper configuration builder constructor used to programmatically create configuration objects for testing or other purposes.
 
-[![sponsor](https://opencollective.com/verdaccio/sponsor/0/avatar.svg)](https://opencollective.com/verdaccio/sponsor/0/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/1/avatar.svg)](https://opencollective.com/verdaccio/sponsor/1/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/2/avatar.svg)](https://opencollective.com/verdaccio/sponsor/2/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/3/avatar.svg)](https://opencollective.com/verdaccio/sponsor/3/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/4/avatar.svg)](https://opencollective.com/verdaccio/sponsor/4/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/5/avatar.svg)](https://opencollective.com/verdaccio/sponsor/5/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/6/avatar.svg)](https://opencollective.com/verdaccio/sponsor/6/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/7/avatar.svg)](https://opencollective.com/verdaccio/sponsor/7/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/8/avatar.svg)](https://opencollective.com/verdaccio/sponsor/8/website)
-[![sponsor](https://opencollective.com/verdaccio/sponsor/9/avatar.svg)](https://opencollective.com/verdaccio/sponsor/9/website)
+```typescript
 
-## Open Collective Backers
+import { ConfigBuilder } from '@verdaccio/config';
 
-Thank you to all our backers! 🙏 [[Become a backer](https://opencollective.com/verdaccio#backer)]
+// Create a new configuration builder instance
+const config = ConfigBuilder.build({ security: { api: { legacy: false } } });
 
-[![backers](https://opencollective.com/verdaccio/backers.svg?width=890)](https://opencollective.com/verdaccio#backers)
+// Add package access configuration
+configBuilder.addPackageAccess('@scope/*', { access: 'read', publish: 'write' });
 
-## Special Thanks
+// Add an uplink configuration
+configBuilder.addUplink('npmjs', { url: 'https://registry.npmjs.org/' });
 
-Thanks to the following companies to help us to achieve our goals providing free open source licenses.
+// Add security configuration
+configBuilder.addSecurity({ allow_offline: true });
 
-[![jetbrain](assets/thanks/jetbrains/logo.png)](https://www.jetbrains.com/)
-[![crowdin](assets/thanks/crowdin/logo.png)](https://crowdin.com/)
-[![balsamiq](assets/thanks/balsamiq/logo.jpg)](https://balsamiq.com/)
+// Get the configuration object
+const config = configBuilder.getConfig();
 
-## Contributors
+// Get the configuration yaml text
+const config = configBuilder.getAsYaml();
+```
 
-This project exists thanks to all the people who contribute. [[Contribute](CONTRIBUTING.md)].
+### Methods
 
-[![contributors](https://opencollective.com/verdaccio/contributors.svg?width=890&button=true)](../../graphs/contributors)
+- `addPackageAccess(pattern: string, pkgAccess: PackageAccessYaml)`: Adds package access configuration.
+- `addUplink(id: string, uplink: UpLinkConf)`: Adds an uplink configuration.
+- `addSecurity(security: Partial<Security>)`: Adds security configuration.
+- `addAuth(auth: Partial<AuthConf>)`: Adds authentication configuration.
+- `addLogger(log: LoggerConfItem)`: Adds logger configuration.
+- `addStorage(storage: string | object)`: Adds storage configuration.
+- `getConfig(): ConfigYaml`: Retrieves the configuration object.
+- `getAsYaml(): string`: Retrieves the configuration object as YAML format.
 
-### FAQ / Contact / Troubleshoot
+## `getDefaultConfig`
 
-If you have any issue you can try the following options, do no desist to ask or check our issues database, perhaps someone has asked already what you are looking for.
+This method is available in the package's index and retrieves the default configuration object.
 
-- [Blog](https://verdaccio.org/blog/)
-- [Donations](https://opencollective.com/verdaccio)
-- [Reporting an issue](https://github.com/verdaccio/verdaccio/blob/master/CONTRIBUTING.md#reporting-a-bug)
-- [Running discussions](https://github.com/verdaccio/verdaccio/issues?q=is%3Aissue+is%3Aopen+label%3Adiscuss)
-- [Chat](http://chat.verdaccio.org/)
-- [Logos](https://verdaccio.org/docs/en/logo)
-- [Docker Examples](https://github.com/verdaccio/docker-examples)
-- [FAQ](https://github.com/verdaccio/verdaccio/issues?utf8=%E2%9C%93&q=is%3Aissue%20label%3Aquestion%20)
+```typescript
+import { getDefaultConfig } from '@verdaccio/config';
+
+const defaultConfig = getDefaultConfig();
+```
+
+## Other Methods
+
+- `fromJStoYAML(config: ConfigYaml): string`: Converts a JavaScript configuration object to YAML format.
+- `parseConfigFile(filePath: string): ConfigYaml`: Parses a configuration file from the specified path and returns the configuration object.
 
 ### License
 

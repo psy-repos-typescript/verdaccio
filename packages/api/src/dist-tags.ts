@@ -2,15 +2,20 @@ import { Router } from 'express';
 import _ from 'lodash';
 import mime from 'mime';
 
-import { IAuth } from '@verdaccio/auth';
+import { Auth } from '@verdaccio/auth';
 import { constants, errorUtils } from '@verdaccio/core';
 import { allow, media } from '@verdaccio/middleware';
+import { DIST_TAGS_API_ENDPOINTS } from '@verdaccio/middleware';
 import { Storage } from '@verdaccio/store';
+import { Logger } from '@verdaccio/types';
 
 import { $NextFunctionVer, $RequestExtend, $ResponseExtend } from '../types/custom';
 
-export default function (route: Router, auth: IAuth, storage: Storage): void {
-  const can = allow(auth);
+export default function (route: Router, auth: Auth, storage: Storage, logger: Logger): void {
+  const can = allow(auth, {
+    beforeAll: (a, b) => logger.trace(a, b),
+    afterAll: (a, b) => logger.trace(a, b),
+  });
   const addTagPackageVersionMiddleware = async function (
     req: $RequestExtend,
     res: $ResponseExtend,
@@ -35,21 +40,21 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
 
   // tagging a package.
   route.put(
-    '/:package/:tag',
+    DIST_TAGS_API_ENDPOINTS.tagging,
     can('publish'),
     media(mime.getType('json')),
     addTagPackageVersionMiddleware
   );
 
   route.put(
-    '/-/package/:package/dist-tags/:tag',
+    DIST_TAGS_API_ENDPOINTS.tagging_package,
     can('publish'),
     media(mime.getType('json')),
     addTagPackageVersionMiddleware
   );
 
   route.delete(
-    '/-/package/:package/dist-tags/:tag',
+    DIST_TAGS_API_ENDPOINTS.tagging_package,
     can('publish'),
     async function (
       req: $RequestExtend,
@@ -71,7 +76,7 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
   );
 
   route.get(
-    '/-/package/:package/dist-tags',
+    DIST_TAGS_API_ENDPOINTS.get_dist_tags,
     can('access'),
     async function (
       req: $RequestExtend,
@@ -93,26 +98,6 @@ export default function (route: Router, auth: IAuth, storage: Storage): void {
           requestOptions,
         });
         next(manifest[constants.DIST_TAGS]);
-      } catch (err) {
-        next(err);
-      }
-    }
-  );
-
-  route.post(
-    '/-/package/:package/dist-tags',
-    can('publish'),
-    async function (
-      req: $RequestExtend,
-      res: $ResponseExtend,
-      next: $NextFunctionVer
-    ): Promise<void> {
-      try {
-        await storage.mergeTagsNext(req.params.package, req.body);
-        res.status(constants.HTTP_STATUS.CREATED);
-        return next({
-          ok: constants.API_MESSAGE.TAG_UPDATED,
-        });
       } catch (err) {
         next(err);
       }

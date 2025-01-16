@@ -2,9 +2,10 @@ import assert from 'assert';
 
 import { Manifest } from '@verdaccio/types';
 
-import { DEFAULT_PASSWORD_VALIDATION, DIST_TAGS } from './constants';
+import { DEFAULT_PASSWORD_VALIDATION, DIST_TAGS, MAINTAINERS } from './constants';
 
 export { validatePublishSingleVersion } from './schemes/publish-manifest';
+export { validateUnPublishSingleVersion } from './schemes/unpublish-manifest';
 
 export function isPackageNameScoped(name: string): boolean {
   return name.startsWith('@');
@@ -67,7 +68,6 @@ export function validatePackage(name: string): boolean {
  * @param {*} manifest
  * @param {*} name
  * @return {Object} the object with additional properties as dist-tags ad versions
- * FUTURE: rename to normalizeMetadata
  */
 export function normalizeMetadata(manifest: Manifest, name: string): Manifest {
   assert.strictEqual(manifest.name, name);
@@ -77,7 +77,11 @@ export function normalizeMetadata(manifest: Manifest, name: string): Manifest {
     _manifest[DIST_TAGS] = {};
   }
 
-  // This may not be nee dit
+  if (!Array.isArray(manifest[MAINTAINERS])) {
+    _manifest[MAINTAINERS] = [];
+  }
+
+  // This may not be needed
   if (!isObject(manifest['versions'])) {
     _manifest['versions'] = {};
   }
@@ -95,14 +99,15 @@ export function normalizeMetadata(manifest: Manifest, name: string): Manifest {
  * @return {Boolean}
  */
 export function isObject(obj: any): boolean {
-  if (obj === null || typeof obj === 'undefined' || typeof obj === 'string') {
-    return false;
-  }
+  // if (obj === null || typeof obj === 'undefined' || typeof obj === 'string') {
+  //   return false;
+  // }
 
-  return (
-    (typeof obj === 'object' || typeof obj.prototype === 'undefined') &&
-    Array.isArray(obj) === false
-  );
+  // return (
+  //   (typeof obj === 'object' || typeof obj.prototype === 'undefined') &&
+  //   Array.isArray(obj) === false
+  // );
+  return Object.prototype.toString.call(obj) === '[object Object]';
 }
 
 export function validatePassword(
@@ -112,4 +117,12 @@ export function validatePassword(
   return typeof password === 'string' && validation instanceof RegExp
     ? password.match(validation) !== null
     : false;
+}
+
+export function validateUserName(userName: any, expectedName: string): boolean {
+  return (
+    typeof userName === 'string' &&
+    userName.split(':')[0] === 'org.couchdb.user' &&
+    userName.split(':')[1] === expectedName
+  );
 }

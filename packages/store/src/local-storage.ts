@@ -2,7 +2,7 @@ import assert from 'assert';
 import buildDebug from 'debug';
 import _ from 'lodash';
 
-import { errorUtils, pluginUtils } from '@verdaccio/core';
+import { PLUGIN_CATEGORY, errorUtils, pluginUtils } from '@verdaccio/core';
 import { asyncLoadPlugin } from '@verdaccio/loaders';
 import LocalDatabase from '@verdaccio/local-storage';
 import { Config, Logger } from '@verdaccio/types';
@@ -11,14 +11,14 @@ const debug = buildDebug('verdaccio:storage:local');
 
 export const noSuchFile = 'ENOENT';
 export const resourceNotAvailable = 'EAGAIN';
-export type IPluginStorage = pluginUtils.IPluginStorage<Config>;
+export type PluginStorage = pluginUtils.Storage<Config>;
 
 /**
  * Implements Storage interface (same for storage.js, local-storage.js, up-storage.js).
  */
 class LocalStorage {
   public config: Config;
-  public storagePlugin: IPluginStorage;
+  public storagePlugin: PluginStorage;
   public logger: Logger;
 
   public constructor(config: Config, logger: Logger) {
@@ -41,7 +41,7 @@ class LocalStorage {
     return;
   }
 
-  public getStoragePlugin(): IPluginStorage {
+  public getStoragePlugin(): PluginStorage {
     if (this.storagePlugin === null) {
       throw errorUtils.getInternalError('storage plugin is not initialized');
     }
@@ -55,27 +55,33 @@ class LocalStorage {
     return this.storagePlugin.setSecret(config.checkSecretKey(secretKey));
   }
 
-  private async loadStorage(config: Config, logger: Logger): Promise<IPluginStorage> {
+  private async loadStorage(config: Config, logger: Logger): Promise<PluginStorage> {
     const Storage = await this.loadStorePlugin();
     if (_.isNil(Storage)) {
       assert(this.config.storage, 'CONFIG: storage path not defined');
       debug('no custom storage found, loading default storage @verdaccio/local-storage');
-      return new LocalDatabase(config, logger);
+      const localStorage = new LocalDatabase(config, logger);
+      logger.info(
+        { name: '@verdaccio/local-storage', pluginCategory: PLUGIN_CATEGORY.STORAGE },
+        'plugin @{name} successfully loaded (@{pluginCategory})'
+      );
+      return localStorage;
     }
-    return Storage as IPluginStorage;
+    return Storage as PluginStorage;
   }
 
-  private async loadStorePlugin(): Promise<IPluginStorage | undefined> {
-    const plugins: IPluginStorage[] = await asyncLoadPlugin<IPluginStorage>(
+  private async loadStorePlugin(): Promise<PluginStorage | undefined> {
+    const plugins: PluginStorage[] = await asyncLoadPlugin<pluginUtils.Storage<unknown>>(
       this.config.store,
       {
         config: this.config,
         logger: this.logger,
       },
-      (plugin): IPluginStorage => {
-        return plugin.getPackageStorage;
+      (plugin) => {
+        return typeof plugin.getPackageStorage !== 'undefined';
       },
-      this.config?.serverSettings?.pluginPrefix
+      this.config?.serverSettings?.pluginPrefix,
+      PLUGIN_CATEGORY.STORAGE
     );
 
     if (plugins.length > 1) {

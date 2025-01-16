@@ -2,29 +2,44 @@ import assert from 'assert';
 import buildDebug from 'debug';
 import _, { isEmpty, isNil } from 'lodash';
 import { basename } from 'path';
-import { PassThrough, Readable, Transform, pipeline as streamPipeline } from 'stream';
+import { PassThrough, Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import { default as URL } from 'url';
 
 import { hasProxyTo } from '@verdaccio/config';
 import {
   API_ERROR,
+  API_MESSAGE,
+  DEFAULT_USER,
   DIST_TAGS,
   HEADER_TYPE,
   HTTP_STATUS,
+  MAINTAINERS,
+  PLUGIN_CATEGORY,
   SUPPORT_ERRORS,
   USERS,
   errorUtils,
-  pkgUtils,
+  pluginUtils,
   searchUtils,
+  tarballUtils,
   validatioUtils,
 } from '@verdaccio/core';
 import { asyncLoadPlugin } from '@verdaccio/loaders';
-import { logger } from '@verdaccio/logger';
-import { IProxy, ISyncUplinksOptions, ProxySearchParams, ProxyStorage } from '@verdaccio/proxy';
 import {
+  IProxy,
+  ISyncUplinksOptions,
+  ProxyInstanceList,
+  ProxySearchParams,
+  ProxyStorage,
+  setupUpLinks,
+  updateVersionsHiddenUpLinkNext,
+} from '@verdaccio/proxy';
+import Search from '@verdaccio/search';
+import {
+  TarballDetails,
   convertDistRemoteToLocalTarballUrls,
   convertDistVersionToLocalTarballsUrl,
+  getTarballDetails,
 } from '@verdaccio/tarball';
 import {
   AbbreviatedManifest,
@@ -33,14 +48,14 @@ import {
   Config,
   DistFile,
   GenericBody,
-  IPackageStorage,
-  IPluginStorageFilter,
   Logger,
   Manifest,
   MergeTags,
+  PackageUsers,
   StringValue,
   Token,
   TokenFilter,
+  UnPublishManifest,
   Version,
 } from '@verdaccio/types';
 import { createTarballHash, isObject, normalizeContributors } from '@verdaccio/utils';
@@ -50,46 +65,47 @@ import {
   UpdateManifestOptions,
   cleanUpReadme,
   isDeprecatedManifest,
-  mapManifestToSearchPackageBody,
   tagVersion,
   tagVersionNext,
 } from '.';
-import { TransFormResults } from './lib/TransFormResults';
-import { removeDuplicates } from './lib/search-utils';
 import { isPublishablePackage } from './lib/star-utils';
+import { isExecutingStarCommand } from './lib/star-utils';
 import {
   STORAGE,
   cleanUpLinksRef,
   generatePackageTemplate,
   generateRevision,
   getLatestReadme,
+  mapManifestToSearchPackageBody,
   mergeUplinkTimeIntoLocalNext,
   mergeVersions,
   normalizeDistTags,
   normalizePackage,
   updateUpLinkMetadata,
 } from './lib/storage-utils';
-import { ProxyInstanceList, setupUpLinks, updateVersionsHiddenUpLinkNext } from './lib/uplink-util';
-import { getVersion } from './lib/versions-utils';
+import { getVersion, removeLowerVersions } from './lib/versions-utils';
 import { LocalStorage } from './local-storage';
-import { IGetPackageOptionsNext, IPluginFilters } from './type';
+import { IGetPackageOptionsNext, OwnerManifestBody, StarManifestBody } from './type';
 
 const debug = buildDebug('verdaccio:storage');
 
+export type Filters = pluginUtils.ManifestFilter<Config>[];
 export const noSuchFile = 'ENOENT';
 export const resourceNotAvailable = 'EAGAIN';
 export const PROTO_NAME = '__proto__';
 
 class Storage {
   public localStorage: LocalStorage;
-  public filters: IPluginFilters | null;
+  public filters: Filters | null;
   public readonly config: Config;
   public readonly logger: Logger;
   public readonly uplinks: ProxyInstanceList;
-  public constructor(config: Config) {
+  private searchService: Search;
+  public constructor(config: Config, logger: Logger) {
     this.config = config;
-    this.uplinks = setupUpLinks(config);
     this.logger = logger.child({ module: 'storage' });
+    this.uplinks = setupUpLinks(config, this.logger);
+    this.searchService = new Search(config, this.logger);
     this.filters = null;
     // @ts-ignore
     this.localStorage = null;
@@ -105,7 +121,7 @@ class Storage {
    */
   public async changePackage(name: string, metadata: Manifest, revision: string): Promise<void> {
     debug('change existing package for package %o revision %o', name, revision);
-    debug(`change manifest tags for %o revision %s`, name, revision);
+    debug(`change manifest tags for %o revision %o`, name, revision);
     if (
       !validatioUtils.isObject(metadata.versions) ||
       !validatioUtils.isObject(metadata[DIST_TAGS])
@@ -114,7 +130,7 @@ class Storage {
       throw errorUtils.getBadData();
     }
 
-    debug(`change manifest udapting manifest for %o`, name);
+    debug(`change manifest updating manifest for %o`, name);
     await this.updatePackage(name, async (localData: Manifest): Promise<Manifest> => {
       // eslint-disable-next-line guard-for-in
       for (const version in localData.versions) {
@@ -151,13 +167,14 @@ class Storage {
 
       localData[USERS] = metadata[USERS];
       localData[DIST_TAGS] = metadata[DIST_TAGS];
+      localData[MAINTAINERS] = metadata[MAINTAINERS];
       return localData;
     });
   }
 
-  public async removePackage(name: string, revision): Promise<void> {
+  public async removePackage(name: string, revision: string, username: string): Promise<void> {
     debug('remove package %o', name);
-    await this.removePackageByRevision(name, revision);
+    await this.removePackageByRevision(name, revision, username);
   }
 
   /**
@@ -167,11 +184,16 @@ class Storage {
    versions, i.e. package version should be unpublished first.
    Used storage: local (write)
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  public async removeTarball(name: string, filename: string, _revision: string): Promise<Manifest> {
+  public async removeTarball(
+    name: string,
+    filename: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _revision: string,
+    username: string
+  ): Promise<Manifest> {
     debug('remove tarball %s for %s', filename, name);
     assert(validatioUtils.validateName(filename));
-    const storage: IPackageStorage = this.getPrivatePackageStorage(name);
+    const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(name);
     if (!storage) {
       debug(`method not implemented for storage`);
       this.logger.error('method for remove tarball not implemented');
@@ -183,6 +205,9 @@ class Storage {
       if (!cacheManifest._attachments[filename]) {
         throw errorUtils.getNotFound('no such file available');
       }
+
+      // check if logged in user is allowed to remove tarball
+      await this.checkAllowedToChangePackage(cacheManifest, username);
     } catch (err: any) {
       if (err.code === noSuchFile) {
         throw errorUtils.getNotFound();
@@ -197,7 +222,7 @@ class Storage {
     });
 
     try {
-      const storage: IPackageStorage = this.getPrivatePackageStorage(name);
+      const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(name);
       if (!storage) {
         debug(`method not implemented for storage`);
         this.logger.error('method for remove tarball not implemented');
@@ -207,7 +232,7 @@ class Storage {
       await storage.deletePackage(filename);
       debug('package %s removed', filename);
     } catch (err: any) {
-      this.logger.error({ err }, 'error removing %s from storage');
+      this.logger.error({ err }, 'error removing from storage: @{err.message}');
       throw err;
     }
     return manifest;
@@ -216,66 +241,26 @@ class Storage {
   /**
    * Handle search on packages and proxies.
    * Iterate all proxies configured and search in all endpoints in v2 and pipe all responses
-   * to a stream, once the proxies request has finished search in local storage for all packages
+   *  once the proxies request has finished search in local storage for all packages
    * (privated and cached).
    */
   public async search(options: ProxySearchParams): Promise<searchUtils.SearchPackageItem[]> {
-    const transformResults = new TransFormResults({ objectMode: true });
-    const streamPassThrough = new PassThrough({ objectMode: true });
-    const upLinkList = this.getProxyList();
-
-    const searchUplinksStreams = upLinkList.map((uplinkId: string) => {
-      const uplink = this.uplinks[uplinkId];
-      if (!uplink) {
-        // this should never tecnically happens
-        this.logger.error({ uplinkId }, 'uplink @upLinkId not found');
-      }
-      return this.consumeSearchStream(uplinkId, uplink, options, streamPassThrough);
-    });
-
-    try {
-      debug('search uplinks');
-      // we only process those streams end successfully, if all fails
-      // we just include local storage
-      await Promise.allSettled([...searchUplinksStreams]);
-      debug('search uplinks done');
-    } catch (err: any) {
-      this.logger.error({ err: err?.message }, ' error on uplinks search @{err}');
-      streamPassThrough.emit('error', err);
-    }
-    debug('search local');
-    try {
-      await this.searchCachedPackages(streamPassThrough, options.query as searchUtils.SearchQuery);
-    } catch (err: any) {
-      this.logger.error({ err: err?.message }, ' error on local search @{err}');
-      streamPassThrough.emit('error', err);
-    }
-    const data: searchUtils.SearchPackageItem[] = [];
-    const outPutStream = new PassThrough({ objectMode: true });
-    streamPipeline(streamPassThrough, transformResults, outPutStream, (err: any) => {
-      if (err) {
-        this.logger.error({ err: err?.message }, ' error on search @{err}');
-        throw errorUtils.getInternalError(err ? err.message : 'unknown search error');
-      } else {
-        debug('pipeline succeeded');
-      }
-    });
-
-    outPutStream.on('data', (chunk) => {
-      data.push(chunk);
-    });
-
-    return new Promise((resolve) => {
-      outPutStream.on('finish', async () => {
-        const searchFinalResults: searchUtils.SearchPackageItem[] = removeDuplicates(data);
-        debug('search stream total results: %o', searchFinalResults.length);
-        return resolve(searchFinalResults);
-      });
-      debug('search done');
-    });
+    debug('search on cache packages');
+    const cachePackages = await this.getCachedPackages(options.query);
+    debug('search found on cache packages %o', cachePackages.length);
+    const remotePackages = await this.searchService.search(options);
+    debug('search found on remote packages %o', remotePackages.length);
+    const totalResults = [...cachePackages, ...remotePackages];
+    const uniqueResults = removeLowerVersions(totalResults);
+    debug('unique results %o', uniqueResults.length);
+    return uniqueResults;
   }
 
   private async getTarballFromUpstream(name: string, filename: string, { signal }) {
+    this.logger.info(
+      { name, filename },
+      'get tarball for package @{name} filename @{filename} from uplink'
+    );
     let cachedManifest: Manifest | null = null;
     try {
       cachedManifest = await this.getPackageLocalMetadata(name);
@@ -295,7 +280,7 @@ class Storage {
       let expected_length;
       const passThroughRemoteStream = new PassThrough();
       const proxy = this.getUpLinkForDistFile(name, distFile);
-      const remoteStream = proxy.fetchTarballNext(distFile.url, {});
+      const remoteStream = proxy.fetchTarball(distFile.url, {});
 
       remoteStream.on('request', async () => {
         try {
@@ -378,7 +363,7 @@ class Storage {
       // should not be the case
       const passThroughRemoteStream = new PassThrough();
       // ensure get the latest data
-      const [updatedManifest] = await this.syncUplinksMetadataNext(name, cachedManifest, {
+      const [updatedManifest] = await this.syncUplinksMetadata(name, cachedManifest, {
         uplinksLook: true,
       });
       const distFile = (updatedManifest as Manifest)._distfiles[filename];
@@ -389,7 +374,7 @@ class Storage {
       }
 
       const proxy = this.getUpLinkForDistFile(name, distFile);
-      const remoteStream = proxy.fetchTarballNext(distFile.url, {});
+      const remoteStream = proxy.fetchTarball(distFile.url, {});
       remoteStream.on('response', async () => {
         try {
           const storage = this.getPrivatePackageStorage(name);
@@ -421,7 +406,8 @@ class Storage {
    * @param param2
    * @returns
    */
-  public async getTarballNext(name: string, filename: string, { signal }): Promise<PassThrough> {
+  public async getTarball(name: string, filename: string, { signal }): Promise<PassThrough> {
+    this.logger.info({ name, filename }, 'get tarball for package @{name} filename @{filename}');
     debug('get tarball for package %o filename %o', name, filename);
     // TODO: check if isOpen is need it after all.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -451,7 +437,7 @@ class Storage {
             localTarballStream.emit('error', err);
           });
       } else {
-        this.logger.error({ err: err.message }, 'some error on fatal @{err}');
+        this.logger.error({ err }, 'some error on fatal: @{err.message}');
         localTarballStream.emit('error', err);
       }
     });
@@ -466,7 +452,7 @@ class Storage {
     }
 
     // we have version, so we need to return specific version
-    const [convertedManifest] = await this.getPackageNext(options);
+    const [convertedManifest] = await this.getPackage(options);
 
     const version: Version | undefined = getVersion(convertedManifest.versions, queryVersion);
 
@@ -513,7 +499,18 @@ class Storage {
 
   public async getPackageManifest(options: IGetPackageOptionsNext): Promise<Manifest> {
     // convert dist remotes to local bars
-    const [manifest] = await this.getPackageNext(options);
+    const [manifest] = await this.getPackage(options);
+
+    // If change access is requested (?write=true), then check if logged in user is allowed to change package
+    if (options.byPassCache === true) {
+      try {
+        await this.checkAllowedToChangePackage(manifest, options.requestOptions.username);
+      } catch (err: any) {
+        this.logger.error({ err }, 'getting package has failed: @{err.message}');
+        throw errorUtils.getBadRequest(err.message);
+      }
+    }
+
     const convertedManifest = convertDistRemoteToLocalTarballUrls(
       manifest,
       options.requestOptions,
@@ -532,7 +529,6 @@ class Storage {
         const _version_abbreviated = {
           name: _version.name,
           version: _version.version,
-          description: _version.description,
           deprecated: _version.deprecated,
           bin: _version.bin,
           dist: _version.dist,
@@ -544,6 +540,10 @@ class Storage {
           peerDependencies: _version.peerDependencies,
           optionalDependencies: _version.optionalDependencies,
           bundleDependencies: _version.bundleDependencies,
+          cpu: _version.cpu,
+          os: _version.os,
+          peerDependenciesMeta: _version.peerDependenciesMeta,
+          acceptDependencies: _version.acceptDependencies,
           // npm cli specifics
           _hasShrinkwrap: _version._hasShrinkwrap,
           hasInstallScript: _version.hasInstallScript,
@@ -560,6 +560,11 @@ class Storage {
       modified: manifest.time.modified,
       // NOTE: special case for pnpm https://github.com/pnpm/rfcs/pull/2
       time: manifest.time,
+      _id: manifest._id,
+      readme: manifest.readme,
+      // TODO: not sure if this is used in some way
+      readmeFilename: '',
+      _rev: manifest._rev,
     };
 
     return convertedManifest;
@@ -575,18 +580,20 @@ class Storage {
   ): Promise<Manifest | AbbreviatedManifest | Version> {
     // if no version we return the whole manifest
     if (_.isNil(options.version) === false) {
+      debug('get package by version %o', options.version);
       return this.getPackageByVersion(options);
     } else {
+      debug('get full package manifest');
       const manifest = await this.getPackageManifest(options);
       if (options.abbreviated === true) {
-        debug('abbreviated manifest');
+        debug('get abbreviated manifest');
         return this.convertAbbreviatedManifest(manifest);
       }
       return manifest;
     }
   }
 
-  public async getLocalDatabaseNext(): Promise<Version[]> {
+  public async getLocalDatabase(): Promise<Version[]> {
     debug('get local database');
     const storage = this.localStorage.getStoragePlugin();
     const database = await storage.get();
@@ -647,12 +654,12 @@ class Storage {
   /**
    * Initialize the storage asynchronously.
    * @param config Config
-   * @param filters IPluginFilters
+   * @param filters Filters
    * @returns Storage instance
    */
   public async init(config: Config): Promise<void> {
     if (this.localStorage === null) {
-      this.localStorage = new LocalStorage(this.config, logger);
+      this.localStorage = new LocalStorage(this.config, this.logger);
       await this.localStorage.init();
       debug('local init storage initialized');
       await this.localStorage.getSecret(config);
@@ -661,42 +668,21 @@ class Storage {
       debug('storage has been already initialized');
     }
     if (!this.filters) {
-      this.filters = await asyncLoadPlugin<IPluginStorageFilter<any>>(
+      this.filters = await asyncLoadPlugin<pluginUtils.ManifestFilter<unknown>>(
         this.config.filters,
         {
           config: this.config,
           logger: this.logger,
         },
-        (plugin) => {
-          return plugin.filterMetadata;
+        (plugin: pluginUtils.ManifestFilter<Config>) => {
+          return typeof plugin.filter_metadata !== 'undefined';
         },
-        this.config?.serverSettings?.pluginPrefix
+        this.config?.serverSettings?.pluginPrefix,
+        PLUGIN_CATEGORY.FILTER
       );
-      debug('filters available %o', this.filters);
+      debug('filters available %o', this.filters.length);
     }
     return;
-  }
-
-  /**
-   * Consume the upstream and pipe it to a transformable stream.
-   */
-  private consumeSearchStream(
-    uplinkId: string,
-    uplink: IProxy,
-    options: ProxySearchParams,
-    searchPassThrough: PassThrough
-  ): Promise<any> {
-    return uplink.search({ ...options }).then((bodyStream) => {
-      bodyStream.pipe(searchPassThrough, { end: false });
-      bodyStream.on('error', (err: any): void => {
-        logger.error(
-          { uplinkId, err: err },
-          'search error for uplink @{uplinkId}: @{err?.message}'
-        );
-        searchPassThrough.end();
-      });
-      return new Promise((resolve) => bodyStream.on('end', resolve));
-    });
   }
 
   /**
@@ -704,7 +690,7 @@ class Storage {
    * @param {Object} pkgName package name.
    * @return {Object}
    */
-  private getPrivatePackageStorage(pkgName: string): IPackageStorage {
+  private getPrivatePackageStorage(pkgName: string): pluginUtils.StorageHandler {
     debug('get local storage for %o', pkgName);
     return this.localStorage.getStoragePlugin().getPackageStorage(pkgName);
   }
@@ -722,7 +708,7 @@ class Storage {
     { signal }: { signal: AbortSignal }
   ): Promise<Readable> {
     assert(validatioUtils.validateName(filename));
-    const storage: IPackageStorage = this.getPrivatePackageStorage(pkgName);
+    const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(pkgName);
     if (typeof storage === 'undefined') {
       return this.createFailureStreamResponseNext();
     }
@@ -730,11 +716,16 @@ class Storage {
     return await storage.readTarball(filename, { signal });
   }
 
-  private async searchCachedPackages(
-    searchStream: PassThrough,
-    query: searchUtils.SearchQuery
-  ): Promise<void> {
-    debug('search on each package');
+  public async getCachedPackages(
+    query?: searchUtils.SearchQuery
+  ): Promise<searchUtils.SearchPackageItem[]> {
+    debug('search on each package', query);
+    const results: searchUtils.SearchPackageItem[] = [];
+    if (typeof query === 'undefined' || typeof query?.text === 'undefined') {
+      debug('search query for cached not found');
+      return results;
+    }
+
     this.logger.info(
       { t: query.text, q: query.quality, p: query.popularity, m: query.maintenance, s: query.size },
       'search by text @{t}| maintenance @{m}| quality @{q}| popularity @{p}'
@@ -742,15 +733,15 @@ class Storage {
 
     if (typeof this.localStorage.getStoragePlugin().search === 'undefined') {
       this.logger.info('plugin search not implemented yet');
-      searchStream.end();
     } else {
-      debug('search on each package by plugin');
+      debug('search on each package by plugin query');
       const items = await this.localStorage.getStoragePlugin().search(query);
       try {
         for (const searchItem of items) {
           const manifest = await this.getPackageLocalMetadata(searchItem.package.name);
           if (_.isEmpty(manifest?.versions) === false) {
             const searchPackage = mapManifestToSearchPackageBody(manifest, searchItem);
+            debug('search local stream found %o', searchPackage.name);
             const searchPackageItem: searchUtils.SearchPackageItem = {
               package: searchPackage,
               score: searchItem.score,
@@ -760,20 +751,29 @@ class Storage {
               // FUTURE: find a better way to calculate the score
               searchScore: 1,
             };
-            searchStream.write(searchPackageItem);
+            results.push(searchPackageItem);
+          } else {
+            debug('local item without versions detected %s', searchItem.package.name);
           }
         }
         debug('search local stream end');
-        searchStream.end();
       } catch (err) {
-        this.logger.error({ err, query }, 'error on search by plugin @{err.message}');
-        searchStream.emit('error', err);
+        this.logger.error(
+          { err, query },
+          'error on search by plugin for @{query.text}: @{err.message}'
+        );
+        throw err;
       }
     }
+    return results;
   }
 
-  private async removePackageByRevision(pkgName: string, revision: string): Promise<void> {
-    const storage: IPackageStorage = this.getPrivatePackageStorage(pkgName);
+  private async removePackageByRevision(
+    pkgName: string,
+    revision: string,
+    username: string
+  ): Promise<void> {
+    const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(pkgName);
     debug('get package metadata for %o', pkgName);
     if (typeof storage === 'undefined') {
       throw errorUtils.getServiceUnavailable('storage not initialized');
@@ -784,18 +784,21 @@ class Storage {
       manifest = normalizePackage(manifest);
     } catch (err: any) {
       if (err.code === STORAGE.NO_SUCH_FILE_ERROR || err.code === HTTP_STATUS.NOT_FOUND) {
-        logger.info({ pkgName, revision }, 'package not found');
+        this.logger.info({ pkgName, revision }, 'package not found');
         throw errorUtils.getNotFound();
       }
-      logger.error(
-        { pkgName, revision, err: err.message },
-        'error @{err} while reading package @{pkgName}-{revision}'
+      this.logger.error(
+        { pkgName, revision, err },
+        'error while reading package @{pkgName}-{revision}: @{err.message}'
       );
       throw err;
     }
 
     // TODO:  move this to another method
     try {
+      // check if logged in user is allowed to remove package
+      await this.checkAllowedToChangePackage(manifest, username);
+
       await this.localStorage.getStoragePlugin().remove(pkgName);
       // remove each attachment
       const attachments = Object.keys(manifest._attachments);
@@ -803,7 +806,7 @@ class Storage {
       for (let attachment of attachments) {
         debug('remove attachment %s', attachment);
         await storage.deletePackage(attachment);
-        logger.info({ attachment }, 'attachment @{attachment} removed');
+        this.logger.info({ attachment }, 'attachment @{attachment} removed');
       }
       // remove package.json
       debug('remove package.json');
@@ -811,9 +814,9 @@ class Storage {
       // remove folder
       debug('remove package folder');
       await storage.removePackage();
-      logger.info({ pkgName }, 'package @{pkgName} removed');
+      this.logger.info({ pkgName }, 'package @{pkgName} removed');
     } catch (err: any) {
-      this.logger.error({ err }, 'removed package has failed @{err.message}');
+      this.logger.error({ err }, 'removed package has failed: @{err.message}');
       throw errorUtils.getBadData(err.message);
     }
   }
@@ -828,7 +831,7 @@ class Storage {
    */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async getPackageLocalMetadata(name: string, _revision?: string): Promise<Manifest> {
-    const storage: IPackageStorage = this.getPrivatePackageStorage(name);
+    const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(name);
     debug('get package metadata for %o', name);
     if (typeof storage === 'undefined') {
       throw errorUtils.getServiceUnavailable('storage not initialized');
@@ -843,8 +846,8 @@ class Storage {
         throw errorUtils.getNotFound();
       }
       this.logger.error(
-        { err: err, file: STORAGE.PACKAGE_FILE_NAME },
-        `error reading  @{file}: @{!err.message}`
+        { err, file: STORAGE.PACKAGE_FILE_NAME },
+        'error reading  @{file}: @{err.message}'
       );
 
       throw errorUtils.getInternalError();
@@ -909,43 +912,72 @@ class Storage {
           url: distFile.url,
           cache: true,
         },
-        this.config
+        this.config,
+        this.logger
       );
     }
     return uplink;
   }
 
-  public async updateManifest(manifest: Manifest, options: UpdateManifestOptions): Promise<void> {
-    if (isDeprecatedManifest(manifest)) {
+  public async updateManifest(
+    manifest: Manifest | StarManifestBody | OwnerManifestBody | UnPublishManifest,
+    options: UpdateManifestOptions
+  ): Promise<string | undefined> {
+    debug('update manifest %o for user %o', manifest._id, options.requestOptions.username);
+    if (isDeprecatedManifest(manifest as Manifest)) {
+      debug('update manifest deprecate');
       // if the manifest is deprecated, we need to update the package.json
-      await this.deprecate(manifest, {
+      await this.deprecate(manifest as Manifest, {
         ...options,
       });
     } else if (
-      isPublishablePackage(manifest) === false &&
-      validatioUtils.isObject(manifest.users)
+      isPublishablePackage(manifest as Manifest) === false &&
+      validatioUtils.isObject((manifest as StarManifestBody).users)
     ) {
+      debug('update manifest star');
       // if user request to apply a star to the manifest
-      await this.star(manifest, {
+      await this.star(manifest as StarManifestBody, {
         ...options,
       });
+      return API_MESSAGE.PKG_CHANGED;
+    } else if (
+      isPublishablePackage(manifest as Manifest) === false &&
+      Array.isArray((manifest as OwnerManifestBody).maintainers)
+    ) {
+      debug('update manifest owners');
+      // if user request to change owners of package
+      await this.changeOwners(manifest as OwnerManifestBody, {
+        ...options,
+      });
+      return API_MESSAGE.PKG_CHANGED;
     } else if (validatioUtils.validatePublishSingleVersion(manifest)) {
       // if continue, the version to be published does not exist
       // we create a new package
-      const [mergedManifest, version] = await this.publishANewVersion(manifest, {
-        ...options,
-      });
+      debug('publish a new version');
+      const [mergedManifest, version, message] = await this.publishANewVersion(
+        manifest as Manifest,
+        {
+          ...options,
+        }
+      );
       // send notification of publication (notification step, non transactional)
       try {
         const { name } = mergedManifest;
         await this.notify(mergedManifest, `${name}@${version}`);
-        logger.info({ name, version }, 'notify for @{name}@@{version} has been sent');
-      } catch (error: any) {
-        logger.error({ error: error.message }, 'notify batch service has failed: @{error}');
+        this.logger.info({ name, version }, 'notify for @{name}@@{version} has been sent');
+      } catch (err: any) {
+        this.logger.error({ err }, 'notify batch service has failed: @{err.message}');
       }
+      return message;
+    } else if (validatioUtils.validateUnPublishSingleVersion(manifest)) {
+      debug('unpublish a version');
+
+      await this.unPublishAPackage(manifest as UnPublishManifest, {
+        ...options,
+      });
     } else {
       debug('invalid body format');
-      logger.info(
+      this.logger.warn(
         { packageName: options.name },
         `wrong package format on publish a package @{packageName}`
       );
@@ -959,15 +991,97 @@ class Storage {
     return this.changePackage(name, manifest, options.revision as string);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async star(_body: Manifest, _options: PublishOptions): Promise<void> {
-    // // const storage: IPackageStorage = this.getPrivatePackageStorage(opname);
+  private async star(manifest: StarManifestBody, options: UpdateManifestOptions): Promise<string> {
+    const { users } = manifest;
+    const { requestOptions, name } = options;
+    debug('star %s', name);
+    const { username } = requestOptions;
+    if (!username) {
+      throw errorUtils.getBadRequest('update users only allowed to logged users');
+    }
 
-    // if (typeof storage === 'undefined') {
-    //   throw errorUtils.getNotFound();
-    // }
+    const localPackage = await this.getPackageManifest({
+      name,
+      requestOptions,
+      uplinksLook: false,
+    });
+    // backward compatible in case users are not in the storage.
+    const localStarUsers = localPackage.users || {};
+    // if trying to add a star
+    const userIsAddingStar = Object.keys(users as PackageUsers).includes(username);
+    if (!isExecutingStarCommand(localPackage?.users as PackageUsers, username, userIsAddingStar)) {
+      return API_MESSAGE.PKG_CHANGED;
+    }
 
-    throw errorUtils.getInternalError('no implementation ready for npm star');
+    const newUsers = userIsAddingStar
+      ? {
+          ...localStarUsers,
+          [username]: true,
+        }
+      : _.reduce(
+          localStarUsers,
+          (users, value, key) => {
+            if (key !== username) {
+              users[key] = value;
+            }
+            return users;
+          },
+          {}
+        );
+
+    await this.changePackage(
+      name,
+      { ...localPackage, users: newUsers },
+      options.revision as string
+    );
+
+    return API_MESSAGE.PKG_CHANGED;
+  }
+
+  private async unPublishAPackage(manifest: UnPublishManifest, options: UpdateManifestOptions) {
+    const { requestOptions, name } = options;
+    debug('unpublish a package of %o', name);
+
+    const localPackage = await this.getPackageManifest({
+      name,
+      requestOptions,
+      uplinksLook: false,
+    });
+    if (localPackage._rev === manifest._rev) {
+      await this.changePackage(name, manifest as Manifest, options.revision as string);
+    }
+
+    return API_MESSAGE.PKG_CHANGED;
+  }
+
+  private async changeOwners(
+    manifest: OwnerManifestBody,
+    options: UpdateManifestOptions
+  ): Promise<string> {
+    const { maintainers } = manifest;
+    const { requestOptions, name } = options;
+    debug('change owners of %o', name);
+    const { username } = requestOptions;
+    if (!username) {
+      throw errorUtils.getBadRequest('update owners only allowed for logged in users');
+    }
+    if (!maintainers || maintainers.length === 0) {
+      throw errorUtils.getBadRequest('maintainers field is required and must not be empty');
+    }
+
+    const localPackage = await this.getPackageManifest({
+      name,
+      requestOptions,
+      uplinksLook: false,
+    });
+
+    await this.changePackage(
+      name,
+      { ...localPackage, maintainers: maintainers as Author[] },
+      options.revision as string
+    );
+
+    return API_MESSAGE.PKG_CHANGED;
   }
 
   /**
@@ -976,7 +1090,7 @@ class Storage {
    * @param name
    * @returns
    */
-  private async getPackagelocalByNameNext(name: string): Promise<Manifest | null> {
+  private async getPackagelocalByName(name: string): Promise<Manifest | null> {
     try {
       return await this.getPackageLocalMetadata(name);
     } catch (err: any) {
@@ -1005,7 +1119,7 @@ class Storage {
    * @returns boolean
    */
   private async hasPackage(pkgName: string): Promise<boolean> {
-    const storage: IPackageStorage = this.getPrivatePackageStorage(pkgName);
+    const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(pkgName);
     if (typeof storage === 'undefined') {
       throw errorUtils.getNotFound();
     }
@@ -1025,10 +1139,11 @@ class Storage {
   private async publishANewVersion(
     body: Manifest,
     options: PublishOptions
-  ): Promise<[Manifest, string]> {
+  ): Promise<[Manifest, string, string]> {
     const { name } = options;
-    debug('publishing a new package for %o', name);
-
+    const username = options.requestOptions.username;
+    debug('publishing a new package for %o as %o', name, username);
+    let successResponseMessage;
     const manifest: Manifest = { ...validatioUtils.normalizeMetadata(body, name) };
     const { _attachments, versions } = manifest;
 
@@ -1037,6 +1152,7 @@ class Storage {
     // versions is need it for holding the version in the local storage as file
     // _attachments and validation are required otherwise cannot continue.
     if (isEmpty(_attachments)) {
+      debug('attachments are empty, cannot continue');
       throw errorUtils.getBadRequest(API_ERROR.UNSUPORTED_REGISTRY_CALL);
     }
 
@@ -1049,58 +1165,64 @@ class Storage {
 
     try {
       // we check if package exist already locally
-      const manifest = await this.getPackagelocalByNameNext(name);
+      const localManifest = await this.getPackagelocalByName(name);
       // if continue, the version to be published does not exist
-      if (manifest?.versions[versionToPublish] != null) {
-        debug('%s version %s already exists', name, versionToPublish);
+      if (localManifest?.versions[versionToPublish] != null) {
+        debug('%s version %s already exists (locally)', name, versionToPublish);
         throw errorUtils.getConflict();
       }
       const uplinksLook = this.config?.publish?.allow_offline === false;
       // if execution get here, package does not exist locally, we search upstream
       const remoteManifest = await this.checkPackageRemote(name, uplinksLook);
       if (remoteManifest?.versions[versionToPublish] != null) {
-        debug('%s version %s already exists', name, versionToPublish);
+        debug('%s version %s already exists (upstream)', name, versionToPublish);
         throw errorUtils.getConflict();
       }
 
       const hasPackageInStorage = await this.hasPackage(name);
       if (!hasPackageInStorage) {
-        await this.createNewLocalCachePackage(name, versionToPublish);
+        await this.createNewLocalCachePackage(name, username);
+        successResponseMessage = API_MESSAGE.PKG_CREATED;
+      } else {
+        await this.checkAllowedToChangePackage(localManifest as Manifest, username);
+        successResponseMessage = API_MESSAGE.PKG_CHANGED;
       }
     } catch (err: any) {
       debug('error on change or update a package with %o', err.message);
-      logger.error({ err: err.message }, 'error on create package: @{err}');
+      this.logger.error({ err }, 'error on publish new version: @{err.message}');
       throw err;
     }
 
     // 1. after tarball has been successfully uploaded, we update the version
     try {
-      // TODO: review why do this
-      versions[versionToPublish].readme =
-        _.isNil(manifest.readme) === false ? String(manifest.readme) : '';
-      await this.addVersionNext(name, versionToPublish, versions[versionToPublish], null);
+      const tarballStats = await this.getTarballStats(versions[versionToPublish], buffer);
+      // Older package managers like npm6 do not send readme content as part of version but include it on root level
+      if (_.isEmpty(versions[versionToPublish].readme)) {
+        versions[versionToPublish].readme =
+          _.isNil(manifest.readme) === false ? String(manifest.readme) : '';
+      }
+      // addVersion will move the readme from the the published version to the root level
+      await this.addVersion(name, versionToPublish, versions[versionToPublish], null, tarballStats);
     } catch (err: any) {
-      logger.error({ err: err.message }, 'updated version has failed: @{err}');
+      this.logger.error({ err }, 'updated version has failed: @{err.message}');
       debug('error on create a version for %o with error %o', name, err.message);
-      // TODO: remove tarball if add version fails
       throw err;
     }
 
     // 2. update and merge tags
     let mergedManifest;
     try {
-      // note: I could merge this with addVersionNext
+      // note: I could merge this with addVersion()
       // 1. add version
       // 2. merge versions
       // 3. upload tarball
-      // 3.update once to the storage (easy peasy)
+      // 4. update once to the storage (easy peasy)
       mergedManifest = await this.mergeTagsNext(name, manifest[DIST_TAGS]);
     } catch (err: any) {
-      logger.error({ err: err.message }, 'merge version has failed: @{err}');
+      this.logger.error({ err }, 'merge version has failed: @{err.message}');
       debug('error on create a version for %o with error %o', name, err.message);
       // TODO: undo if this fails
-      // 1. remove tarball
-      // 2. remove updated version
+      // 1. remove updated version
       throw err;
     }
 
@@ -1111,28 +1233,25 @@ class Storage {
         signal: options.signal,
       });
     } catch (err: any) {
-      logger.error({ err: err.message }, 'upload tarball has failed: @{err}');
+      this.logger.error({ err }, 'upload tarball has failed: @{err.message}');
+      // TODO: undo if this fails
+      // 1. remove updated version
+      // 2. remove new dist tags
       throw err;
     }
 
-    logger.info(
+    this.logger.info(
       { name, version: versionToPublish },
       'package @{name}@@{version} has been published'
     );
 
-    return [mergedManifest, versionToPublish];
+    return [mergedManifest, versionToPublish, successResponseMessage];
   }
 
   // TODO: pending implementation
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private async notify(_manifest: Manifest, _message: string): Promise<void> {
     return;
-  }
-
-  private getProxyList() {
-    const uplinksList = Object.keys(this.uplinks);
-
-    return uplinksList;
   }
 
   /**
@@ -1275,26 +1394,36 @@ class Storage {
    * @param metadata version metadata
    * @param tag tag of the version
    */
-  public async addVersionNext(
+  private async addVersion(
     name: string,
     version: string,
     metadata: Version,
-    tag: StringValue
+    tag: StringValue,
+    tarballStats: TarballDetails
   ): Promise<void> {
     debug(`add version %s package for %s`, version, name);
     await this.updatePackage(name, async (data: Manifest): Promise<Manifest> => {
-      // keep only one readme per package
+      // keep latest readme in manifest (on root level)
       data.readme = metadata.readme;
-      debug('%s` readme mutated', name);
-      // TODO: lodash remove
-      metadata = cleanUpReadme(metadata);
+      debug('%s readme mutated', name);
+      // removing other readmes depends on config
+      metadata = cleanUpReadme(metadata, metadata[DIST_TAGS], this.config?.publish?.keep_readmes);
       metadata.contributors = normalizeContributors(metadata.contributors as Author[]);
-      debug('%s` contributors normalized', name);
+      debug('%s contributors normalized', name);
+
+      // Copy current owners to version
+      metadata.maintainers = data.maintainers;
+
+      // Update tarball stats
+      if (metadata.dist) {
+        metadata.dist.fileCount = tarballStats.fileCount;
+        metadata.dist.unpackedSize = tarballStats.unpackedSize;
+      }
 
       // if uploaded tarball has a different shasum, it's very likely that we
       // have some kind of error
       if (validatioUtils.isObject(metadata.dist) && _.isString(metadata.dist.tarball)) {
-        const tarball = metadata.dist.tarball.replace(/.*\//, '');
+        const tarball = tarballUtils.extractTarballFromUrl(metadata.dist.tarball);
         if (validatioUtils.isObject(data._attachments[tarball])) {
           if (
             _.isNil(data._attachments[tarball].shasum) === false &&
@@ -1306,6 +1435,9 @@ class Storage {
                 `${data._attachments[tarball].shasum} != ${metadata.dist.shasum}`;
               throw errorUtils.getBadRequest(errorMessage);
             }
+          }
+          if (tarball === '__proto__' || tarball === 'constructor' || tarball === 'prototype') {
+            throw errorUtils.getBadRequest('tarball name is not allowed');
           }
           data._attachments[tarball].version = version;
         }
@@ -1344,7 +1476,7 @@ class Storage {
       tagVersion(data, version, tag);
 
       try {
-        debug('%s` add on database', name);
+        debug('%s add on database', name);
         await this.localStorage.getStoragePlugin().add(name);
         this.logger.debug({ name, version }, 'version @{version} added to database for @{name}');
       } catch (err: any) {
@@ -1359,8 +1491,11 @@ class Storage {
    * @param name name of the package
    * @returns
    */
-  private async createNewLocalCachePackage(name: string, latestVersion: string): Promise<void> {
-    const storage: IPackageStorage = this.getPrivatePackageStorage(name);
+  private async createNewLocalCachePackage(
+    name: string,
+    username: string | undefined
+  ): Promise<void> {
+    const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(name);
 
     if (!storage) {
       debug(`storage is missing for %o package cannot be added`, name);
@@ -1368,14 +1503,22 @@ class Storage {
     }
 
     const currentTime = new Date().toISOString();
+    const defaultManifest = generatePackageTemplate(name);
     const packageData: Manifest = {
-      ...generatePackageTemplate(name),
+      ...defaultManifest,
+      _rev: generateRevision(defaultManifest._rev),
       time: {
         created: currentTime,
         modified: currentTime,
-        [latestVersion]: currentTime,
       },
     };
+
+    // Set initial package owner
+    // TODO: Add email of user
+    packageData.maintainers =
+      username && username.length > 0
+        ? [{ name: username, email: '' }]
+        : [{ name: DEFAULT_USER, email: '' }];
 
     try {
       await storage.createPackage(name, packageData);
@@ -1402,7 +1545,7 @@ class Storage {
   private async checkPackageRemote(name: string, uplinksLook: boolean): Promise<Manifest | null> {
     try {
       // we provide a null manifest, thus the manifest returned will be the remote one
-      const [remoteManifest, upLinksErrors] = await this.syncUplinksMetadataNext(name, null, {
+      const [remoteManifest, upLinksErrors] = await this.syncUplinksMetadata(name, null, {
         uplinksLook,
       });
 
@@ -1468,7 +1611,7 @@ class Storage {
     name: string,
     updateHandler: (manifest: Manifest) => Promise<Manifest>
   ): Promise<Manifest> {
-    const storage: IPackageStorage = this.getPrivatePackageStorage(name);
+    const storage: pluginUtils.StorageHandler = this.getPrivatePackageStorage(name);
 
     if (!storage) {
       throw errorUtils.getNotFound();
@@ -1498,7 +1641,7 @@ class Storage {
    * @return {*}  {Promise<[Manifest, any[]]>}
    * @memberof AbstractStorage
    */
-  private async getPackageNext(options: IGetPackageOptionsNext): Promise<[Manifest, any[]]> {
+  private async getPackage(options: IGetPackageOptionsNext): Promise<[Manifest, any[]]> {
     const { name } = options;
     debug('get package for %o', name);
     let data: Manifest | null = null;
@@ -1515,7 +1658,7 @@ class Storage {
     // if we can't get the local metadata, we try to get the remote metadata
     // if we do to have local metadata, we try to update it with the upstream registry
     debug('sync uplinks for %o', name);
-    const [remoteManifest, upLinksErrors] = await this.syncUplinksMetadataNext(name, data, {
+    const [remoteManifest, upLinksErrors] = await this.syncUplinksMetadata(name, data, {
       uplinksLook: options.uplinksLook,
       retry: options.retry,
       remoteAddress: options.requestOptions.remoteAddress,
@@ -1538,7 +1681,7 @@ class Storage {
       _attachments: {},
     });
 
-    debug('no. sync uplinks errors %o for %s', upLinksErrors?.length, name);
+    debug('no sync uplinks errors %o for %s', upLinksErrors?.length, name);
     return [normalizedPkg, upLinksErrors];
   }
 
@@ -1566,10 +1709,10 @@ class Storage {
     in that case the request returns empty body and we want ask next on the list if has fresh
     updates.
    */
-  public async syncUplinksMetadataNext(
+  public async syncUplinksMetadata(
     name: string,
     localManifest: Manifest | null,
-    options: ISyncUplinksOptions = {}
+    options: Partial<ISyncUplinksOptions> = {}
   ): Promise<[Manifest | null, any]> {
     let found = localManifest !== null;
     let syncManifest: Manifest | null = null;
@@ -1591,7 +1734,7 @@ class Storage {
     }
 
     const uplinksErrors: any[] = [];
-    // we resolve uplinks async in serie, first come first serve
+    // we resolve uplinks async in series, first come first serve
     for (const uplink of upLinks) {
       try {
         const tempManifest = _.isNil(localManifest)
@@ -1662,7 +1805,7 @@ class Storage {
   private async mergeCacheRemoteMetadata(
     uplink: IProxy,
     cachedManifest: Manifest,
-    options: ISyncUplinksOptions
+    options: Partial<ISyncUplinksOptions>
   ): Promise<Manifest> {
     // we store which uplink is updating the manifest
     const upLinkMeta = cachedManifest._uplinks[uplink.upname];
@@ -1682,7 +1825,7 @@ class Storage {
     });
 
     // get the latest metadata from the uplink
-    const [remoteManifest, etag] = await uplink.getRemoteMetadataNext(
+    const [remoteManifest, etag] = await uplink.getRemoteMetadata(
       _cacheManifest.name,
       remoteOptions
     );
@@ -1690,12 +1833,7 @@ class Storage {
     try {
       _cacheManifest = validatioUtils.normalizeMetadata(_cacheManifest, _cacheManifest.name);
     } catch (err: any) {
-      this.logger.error(
-        {
-          err: err,
-        },
-        'package.json validating error @{!err?.message}\n@{err.stack}'
-      );
+      this.logger.error({ err }, 'package.json validating error @{!err?.message}\n@{err.stack}');
       throw err;
     }
     // updates the _uplink metadata fields, cache, etc
@@ -1709,12 +1847,7 @@ class Storage {
       _cacheManifest = mergeVersions(_cacheManifest, remoteManifest);
       return _cacheManifest;
     } catch (err: any) {
-      this.logger.error(
-        {
-          err: err,
-        },
-        'package.json merge has failed @{!err?.message}\n@{err.stack}'
-      );
+      this.logger.error({ err }, 'package.json merge has failed @{!err?.message}\n@{err.stack}');
       throw err;
     }
   }
@@ -1736,16 +1869,16 @@ class Storage {
       // and return it directly for
       // performance (i.e. need not be pure)
       try {
-        filteredManifest = await filter.filterMetadata(manifest);
+        filteredManifest = await filter.filter_metadata(manifest);
       } catch (err: any) {
-        this.logger.error({ err: err.message }, 'filter has failed @{err}');
+        this.logger.error({ err }, 'filter has failed: @{err.message}');
         filterPluginErrors.push(err);
       }
     }
     return [filteredManifest, filterPluginErrors];
   }
 
-  private _createNewPackageNext(name: string): Manifest {
+  private _createNewPackage(name: string): Manifest {
     return normalizePackage(generatePackageTemplate(name));
   }
 
@@ -1791,11 +1924,11 @@ class Storage {
       return normalizePackage(result);
     } catch (err: any) {
       if (err.code === STORAGE.NO_SUCH_FILE_ERROR || err.code === HTTP_STATUS.NOT_FOUND) {
-        return this._createNewPackageNext(pkgName);
+        return this._createNewPackage(pkgName);
       } else {
         this.logger.error(
-          { err: err, file: STORAGE.PACKAGE_FILE_NAME },
-          `'error reading'  @{file}: @{!err.message}`
+          { err, file: STORAGE.PACKAGE_FILE_NAME },
+          'error reading @{file}: @{err.message}'
         );
 
         throw errorUtils.getInternalError();
@@ -1808,7 +1941,7 @@ class Storage {
 
     The steps are the following.
     1. Get the latest version of the package from the cache.
-    2. If does not exist will return a 
+    2. If does not exist will return a
 
     @param name
     @param remoteManifest
@@ -1832,10 +1965,12 @@ class Storage {
         debug('new version from upstream %o', versionId);
         let version = remoteManifest.versions[versionId];
 
-        // we don't keep readme for package versions,
-        // only one readme per package
-        // TODO: readme clean up could be  saved in configured eventually
-        version = cleanUpReadme(version);
+        // removing readmes depends on config
+        version = cleanUpReadme(
+          version,
+          remoteManifest[DIST_TAGS],
+          this.config?.publish?.keep_readmes
+        );
         debug('clean up readme for %o', versionId);
         version.contributors = normalizeContributors(version.contributors as Author[]);
 
@@ -1843,7 +1978,7 @@ class Storage {
         cacheManifest.versions[versionId] = version;
 
         if (version?.dist?.tarball) {
-          const filename = pkgUtils.extractTarballName(version.dist.tarball);
+          const filename = tarballUtils.extractTarballFromUrl(version.dist.tarball);
           // store a fast access to the dist file by tarball name
           // it does NOT overwrite any existing records
           if (_.isNil(cacheManifest?._distfiles[filename])) {
@@ -1900,6 +2035,35 @@ class Storage {
       return cacheManifest;
     } else {
       return cacheManifest;
+    }
+  }
+
+  private async getTarballStats(version: Version, buffer: Buffer): Promise<TarballDetails> {
+    if (
+      version.dist == undefined ||
+      version.dist?.fileCount == undefined ||
+      version.dist?.unpackedSize == undefined
+    ) {
+      debug('tarball stats not found, calculating');
+      return await getTarballDetails(buffer);
+    } else {
+      debug('tarball stats found');
+      return { fileCount: version.dist.fileCount, unpackedSize: version.dist.unpackedSize };
+    }
+  }
+
+  private async checkAllowedToChangePackage(manifest: Manifest, username: string | undefined) {
+    // Checks to perform if config "publish:check_owners" is true
+    debug('check if user %o is an owner and allowed to change package', username);
+    // if name of owner is not included in list of maintainers, then throw an error
+    if (
+      this.config?.publish?.check_owners === true &&
+      manifest.maintainers &&
+      manifest.maintainers.length > 0 &&
+      !manifest.maintainers.some((maintainer) => maintainer.name === username)
+    ) {
+      this.logger.error({ username }, '@{username} is not a maintainer (package owner)');
+      throw Error('only owners are allowed to change package');
     }
   }
 }

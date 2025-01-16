@@ -1,6 +1,6 @@
 {
   "name": "verdaccio-memory",
-  "version": "11.0.0-6-next.14",
+  "version": "13.0.0-next-8.7",
   "description": "Storage implementation in memory",
   "keywords": [
     "private",
@@ -27,19 +27,18 @@
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "engines": {
-    "node": ">=14",
-    "npm": ">=6"
+    "node": ">=18"
   },
   "dependencies": {
-    "@verdaccio/core": "workspace:6.0.0-6-next.47",
+    "@verdaccio/core": "workspace:8.0.0-next-8.7",
     "memory-fs": "0.5.0",
-    "debug": "4.3.4",
-    "memfs": "3.4.7"
+    "debug": "4.4.0",
+    "memfs": "3.5.3"
   },
   "devDependencies": {
-    "@verdaccio/types": "workspace:11.0.0-6-next.16",
-    "@verdaccio/config": "workspace:6.0.0-6-next.47",
-    "@verdaccio/logger": "workspace:6.0.0-6-next.15"
+    "@verdaccio/types": "workspace:13.0.0-next-8.2",
+    "@verdaccio/config": "workspace:8.0.0-next-8.7",
+    "@verdaccio/logger": "workspace:8.0.0-next-8.7"
   },
   "scripts": {
     "clean": "rimraf ./build",
@@ -48,7 +47,7 @@
     "build:js": "babel src/ --out-dir build/ --copy-files --extensions \".ts,.tsx\" --source-maps",
     "build": "pnpm run build:js && pnpm run build:types",
     "watch": "pnpm build:js -- --watch",
-    "test": "cross-env NODE_ENV=test BABEL_ENV=test jest"
+    "test": "cross-env NODE_ENV=test vitest run"
   },
   "funding": {
     "type": "opencollective",

@@ -1,0 +1,32 @@
+name: E2E UI
+
+on: [pull_request]
+
+permissions:
+  contents: read
+concurrency:
+  group: e2e-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: UI Test E2E
+    services:
+      verdaccio:
+        image: verdaccio/verdaccio:6
+        ports:
+          - 4873:4873
+        env:
+          NODE_ENV: production
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build application with Node 20
+        uses: ./.github/actions/build-app
+        with:
+          node-version: 20
+      - name: Test UI
+        run: pnpm test:e2e:ui
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: videos
+          path: /home/runner/work/verdaccio/verdaccio/e2e/ui/cypress/videos

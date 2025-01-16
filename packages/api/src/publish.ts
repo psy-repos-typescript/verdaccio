@@ -2,16 +2,15 @@ import buildDebug from 'debug';
 import { Router } from 'express';
 import mime from 'mime';
 
-import { IAuth } from '@verdaccio/auth';
+import { Auth } from '@verdaccio/auth';
 import { API_MESSAGE, HTTP_STATUS } from '@verdaccio/core';
-import { logger } from '@verdaccio/logger';
 import { allow, expectJson, media } from '@verdaccio/middleware';
+// import star from './star';
+import { PUBLISH_API_ENDPOINTS } from '@verdaccio/middleware';
 import { Storage } from '@verdaccio/store';
+import { Logger } from '@verdaccio/types';
 
 import { $NextFunctionVer, $RequestExtend, $ResponseExtend } from '../types/custom';
-
-// import star from './star';
-// import { isPublishablePackage, isRelatedToDeprecation } from './utils';
 
 const debug = buildDebug('verdaccio:api:publish');
 
@@ -74,14 +73,14 @@ const debug = buildDebug('verdaccio:api:publish');
    * npm http fetch GET 200 http://localhost:4873/custom-name?write=true 1601ms
    * Remove the tarball
    * npm http fetch DELETE 201 http://localhost:4873/custom-name/-/test1-1.0.3.tgz/-rev/16-e11c8db282b2d992 19ms
-   * 
+   *
    * 3. Star a package
    *
-   * Permissions: start a package depends of the publish and unpublish permissions, there is no
-   * specific flag for star or un start.
+   * Permissions: staring a package depends of the publish and unpublish permissions, there is no
+   * specific flag for star or unstar.
    * The URL for star is similar to the unpublish (change package format)
    *
-   * npm has no endpoint for star a package, rather mutate the metadata and acts as, the difference
+   * npm has no endpoint for staring a package, rather mutate the metadata and acts as, the difference
    * is the users property which is part of the payload and the body only includes
    *
    * {
@@ -90,45 +89,80 @@ const debug = buildDebug('verdaccio:api:publish');
 		  "users": {
 		    [username]: boolean value (true, false)
 		  }
-	}
+	   }
+   *
+   * 4. Change owners of a package
+   *
+   * Similar to staring a package, changing owners (maintainers) of a package uses the publish
+   * endpoint.
+   *
+   * The body includes a list of the new owners with the following format
+   *
+   * {
+		  "_id": pkgName,
+	  	"_rev": "4-b0cdaefc9bdb77c8",
+		  "maintainers": [
+        { "name": "first owner", "email": "me@verdaccio.org" },
+        { "name": "second owner", "email": "you@verdaccio.org" },
+        ...
+		  ]
+	   }
    *
    */
-export default function publish(router: Router, auth: IAuth, storage: Storage): void {
-  const can = allow(auth);
+export default function publish(
+  router: Router,
+  auth: Auth,
+  storage: Storage,
+  logger: Logger
+): void {
+  const can = allow(auth, {
+    beforeAll: (a, b) => logger.trace(a, b),
+    afterAll: (a, b) => logger.trace(a, b),
+  });
   router.put(
-    '/:package',
+    PUBLISH_API_ENDPOINTS.add_package,
     can('publish'),
     media(mime.getType('json')),
     expectJson,
-    publishPackage(storage)
+    publishPackage(storage, logger, 'publish one version')
   );
 
   router.put(
-    '/:package/-rev/:revision',
+    PUBLISH_API_ENDPOINTS.publish_package,
     can('unpublish'),
     media(mime.getType('json')),
     expectJson,
-    publishPackage(storage)
+    publishPackage(storage, logger, 'publish with revision')
   );
 
   /**
    * Un-publishing an entire package.
    *
-   * This scenario happens when the first call detect there is only one version remaining
-   * in the metadata, then the client decides to DELETE the resource
+   * This scenario happens when any of these scenarios happens:
+   *  -  the first call detect there is only one version remaining
+   *  -  no version is specified in the unpublish call
+   *  -  all versions are removed npm unpublish package@*
+   *  -  there is no versions on the metadata
+
+   * then the client decides to DELETE the resource
+   * Example:
+   * Get fresh manifest (write=true is a flag to get the latest revision)
    * npm http fetch GET 304 http://localhost:4873/package-name?write=true 1076ms (from cache)
+   * Send request to delete the package, this includes the revision number that must match
+   * and the package name, it will delete the entire package and all tarballs (or tarball depends the scenario)
    * npm http fetch DELETE 201 http://localhost:4873/package-name/-rev/18-d8ebe3020bd4ac9c 22ms
    */
   router.delete(
-    '/:package/-rev/:revision',
+    PUBLISH_API_ENDPOINTS.publish_package,
     can('unpublish'),
     async function (req: $RequestExtend, res: $ResponseExtend, next: $NextFunctionVer) {
       const packageName = req.params.package;
       const rev = req.params.revision;
+      const username = req?.remote_user?.name;
 
       logger.debug({ packageName }, `unpublishing @{packageName}`);
       try {
-        await storage.removePackage(packageName, rev);
+        await storage.removePackage(packageName, rev, username);
         debug('package %s unpublished', packageName);
         res.status(HTTP_STATUS.CREATED);
         return next({ ok: API_MESSAGE.PKG_REMOVED });
@@ -143,7 +177,7 @@ export default function publish(router: Router, auth: IAuth, storage: Storage): 
    npm http fetch DELETE 201 http://localhost:4873/package-name/-rev/18-d8ebe3020bd4ac9c 22ms
   */
   router.delete(
-    '/:package/-/:filename/-rev/:revision',
+    PUBLISH_API_ENDPOINTS.remove_tarball,
     can('unpublish'),
     can('publish'),
     async function (
@@ -153,13 +187,14 @@ export default function publish(router: Router, auth: IAuth, storage: Storage): 
     ): Promise<void> {
       const packageName = req.params.package;
       const { filename, revision } = req.params;
+      const username = req?.remote_user?.name;
 
       logger.debug(
         { packageName, filename, revision },
         `removing a tarball for @{packageName}-@{tarballName}-@{revision}`
       );
       try {
-        await storage.removeTarball(packageName, filename, revision);
+        await storage.removeTarball(packageName, filename, revision, username);
         res.status(HTTP_STATUS.CREATED);
 
         logger.debug(
@@ -174,38 +209,50 @@ export default function publish(router: Router, auth: IAuth, storage: Storage): 
   );
 }
 
-export function publishPackage(storage: Storage): any {
+export function publishPackage(storage: Storage, logger: Logger, origin: string): any {
   return async function (
     req: $RequestExtend,
-    _res: $ResponseExtend,
+    res: $ResponseExtend,
     next: $NextFunctionVer
   ): Promise<void> {
+    debug(origin);
     const ac = new AbortController();
     const packageName = req.params.package;
     const { revision } = req.params;
+    debug('publishing package %s', packageName);
+    debug('revision %s', revision);
+    if (debug.enabled) {
+      debug('body %o', req.body);
+    }
     const metadata = req.body;
+    const username = req?.remote_user?.name;
+
+    debug('publishing package %o for user %o', packageName, username);
+    logger.debug(
+      { packageName, username },
+      'publishing package @{packageName} for user @{username}'
+    );
 
     try {
-      debug('publishing %s', packageName);
-      await storage.updateManifest(metadata, {
+      const message = await storage.updateManifest(metadata, {
         name: packageName,
         revision,
         signal: ac.signal,
         requestOptions: {
           host: req.hostname,
           protocol: req.protocol,
-          // @ts-ignore
-          headers: req.headers,
+          headers: req.headers as { [key: string]: string },
+          username,
         },
+        uplinksLook: false,
       });
-      _res.status(HTTP_STATUS.CREATED);
+      debug('package %s published', packageName);
+
+      res.status(HTTP_STATUS.CREATED);
 
       return next({
-        // TODO: this could be also Package Updated based on the
-        // action, deprecate, star, publish new version, or create a package
-        // the message some return from the method
-        ok: API_MESSAGE.PKG_CREATED,
         success: true,
+        ok: message,
       });
     } catch (err: any) {
       // TODO: review if we need the abort controller here

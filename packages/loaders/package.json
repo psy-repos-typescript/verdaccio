@@ -1,6 +1,6 @@
 {
   "name": "@verdaccio/loaders",
-  "version": "6.0.0-6-next.16",
+  "version": "8.0.0-next-8.4",
   "description": "loaders logic",
   "main": "./build/index.js",
   "types": "build/index.d.ts",
@@ -13,17 +13,17 @@
     "url": "https://github.com/verdaccio/verdaccio"
   },
   "dependencies": {
-    "@verdaccio/logger": "workspace:6.0.0-6-next.15",
-    "debug": "4.3.4",
+    "debug": "4.4.0",
     "lodash": "4.17.21"
   },
   "devDependencies": {
-    "@verdaccio/core": "workspace:6.0.0-6-next.47",
-    "@verdaccio/config": "workspace:6.0.0-6-next.47",
-    "@verdaccio/types": "workspace:11.0.0-6-next.16",
+    "@verdaccio/logger": "workspace:8.0.0-next-8.7",
+    "@verdaccio/core": "workspace:8.0.0-next-8.7",
+    "@verdaccio/config": "workspace:8.0.0-next-8.7",
+    "@verdaccio/types": "workspace:13.0.0-next-8.2",
     "@verdaccio-scope/verdaccio-auth-foo": "0.0.2",
     "verdaccio-auth-memory": "workspace:*",
-    "customprefix-auth": "0.0.1"
+    "customprefix-auth": "2.0.0"
   },
   "homepage": "https://verdaccio.org",
   "keywords": [
@@ -38,13 +38,12 @@
     "verdaccio"
   ],
   "engines": {
-    "node": ">=14",
-    "npm": ">=6"
+    "node": ">=18"
   },
   "license": "MIT",
   "scripts": {
     "clean": "rimraf ./build",
-    "test": "jest",
+    "test": "vitest run",
     "type-check": "tsc --noEmit -p tsconfig.build.json",
     "build:types": "tsc --emitDeclarationOnly -p tsconfig.build.json",
     "build:js": "babel src/ --out-dir build/ --copy-files --extensions \".ts,.tsx\" --source-maps",

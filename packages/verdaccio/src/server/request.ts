@@ -78,6 +78,7 @@ export async function createRequest(options: Options): Promise<any> {
   debug('options %s', JSON.stringify(options));
   let body = undefined;
   if (isNil(options.body) === false) {
+    // @ts-ignore
     body = isObject(options.body) === false ? JSON.stringify(options.body) : options.body;
   }
 
@@ -138,7 +139,7 @@ export class ServerQuery {
   public constructor(url) {
     this.url = url.replace(/\/$/, '');
     debug('server url %s', this.url);
-    this.userAgent = 'node/v8.1.2 linux x64';
+    this.userAgent = 'node/v22.13.0 linux x64';
   }
 
   private request(options: any): Promise<ResponseAssert> {
@@ -215,7 +216,7 @@ export class ServerQuery {
    */
   public removePackage(name: string, rev) {
     return this.request({
-      uri: `/${encodeURIComponent(name)}/-rev/${rev}`,
+      uri: `/${encodeURIComponent(name)}/-rev/${encodeURIComponent(rev)}`,
       method: 'DELETE',
       headers: {
         [HEADERS.CONTENT_TYPE]: HEADERS.JSON_CHARSET,
@@ -225,7 +226,7 @@ export class ServerQuery {
 
   public removeSingleTarball(name: string, filename: string) {
     return this.request({
-      uri: `/${encodeURIComponent(name)}/-/${filename}/-rev/whatever`,
+      uri: `/${encodeURIComponent(name)}/-/${encodeURIComponent(filename)}/-rev/whatever`,
       method: 'DELETE',
       headers: {
         [HEADERS.CONTENT_TYPE]: HEADERS.JSON_CHARSET,
@@ -275,10 +276,14 @@ export class ServerQuery {
     });
   }
 
-  public async addPackage(name: string, version: string = '1.0.0'): Promise<ResponseAssert> {
+  public async addPackage(
+    name: string,
+    version: string = '1.0.0',
+    message = API_MESSAGE.PKG_CREATED
+  ): Promise<ResponseAssert> {
     return (await this.putPackage(name, generatePackageMetadata(name, version)))
       .status(HTTP_STATUS.CREATED)
-      .body_ok(API_MESSAGE.PKG_CREATED);
+      .body_ok(message);
   }
 
   public async addPackageAssert(name: string, version: string = '1.0.0'): Promise<ResponseAssert> {

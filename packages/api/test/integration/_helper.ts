@@ -2,6 +2,7 @@ import { Application } from 'express';
 import _ from 'lodash';
 import path from 'path';
 import supertest from 'supertest';
+import { expect } from 'vitest';
 
 import { parseConfigFile } from '@verdaccio/config';
 import { HEADERS, HEADER_TYPE, HTTP_STATUS, TOKEN_BEARER } from '@verdaccio/core';
@@ -11,12 +12,12 @@ import {
   generatePackageMetadata,
   initializeServer as initializeServerHelper,
 } from '@verdaccio/test-helper';
-import { GenericBody } from '@verdaccio/types';
+import { Author, GenericBody, PackageUsers } from '@verdaccio/types';
 import { buildToken, generateRandomHexString } from '@verdaccio/utils';
 
 import apiMiddleware from '../../src';
 
-setup();
+setup({});
 
 export const getConf = (conf) => {
   const configPath = path.join(__dirname, 'config', conf);
@@ -39,6 +40,7 @@ export function createUser(app, name: string, password: string): supertest.Test 
       password: password,
     })
     .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON_CHARSET)
+    .expect(HEADERS.CACHE_CONTROL, 'no-cache, no-store')
     .expect(HTTP_STATUS.CREATED);
 }
 
@@ -91,16 +93,85 @@ export function publishVersion(
   app,
   pkgName: string,
   version: string,
-  distTags?: GenericBody
+  distTags?: GenericBody,
+  token?: string
 ): supertest.Test {
   const pkgMetadata = generatePackageMetadata(pkgName, version, distTags);
 
-  return supertest(app)
+  const test = supertest(app)
     .put(`/${encodeURIComponent(pkgName)}`)
     .set(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON)
     .send(JSON.stringify(pkgMetadata))
     .set('accept', HEADERS.GZIP)
     .set(HEADER_TYPE.ACCEPT_ENCODING, HEADERS.JSON);
+
+  if (typeof token === 'string') {
+    test.set(HEADERS.AUTHORIZATION, buildToken(TOKEN_BEARER, token));
+  }
+
+  return test;
+}
+
+export function starPackage(
+  app,
+  options: {
+    users: PackageUsers;
+    name: string;
+    _rev: string;
+    _id?: string;
+  },
+  token?: string
+): supertest.Test {
+  const { _rev, _id, users } = options;
+  const starManifest = {
+    _rev,
+    _id,
+    users,
+  };
+
+  const test = supertest(app)
+    .put(`/${encodeURIComponent(options.name)}`)
+    .set(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON)
+    .send(JSON.stringify(starManifest))
+    .set('accept', HEADERS.GZIP)
+    .set(HEADER_TYPE.ACCEPT_ENCODING, HEADERS.JSON);
+
+  if (typeof token === 'string') {
+    test.set(HEADERS.AUTHORIZATION, buildToken(TOKEN_BEARER, token));
+  }
+
+  return test;
+}
+
+export function changeOwners(
+  app,
+  options: {
+    maintainers: Author[];
+    name: string;
+    _rev: string;
+    _id?: string;
+  },
+  token?: string
+): supertest.Test {
+  const { _rev, _id, maintainers } = options;
+  const ownerManifest = {
+    _rev,
+    _id,
+    maintainers,
+  };
+
+  const test = supertest(app)
+    .put(`/${encodeURIComponent(options.name)}`)
+    .set(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON)
+    .send(JSON.stringify(ownerManifest))
+    .set('accept', HEADERS.GZIP)
+    .set(HEADER_TYPE.ACCEPT_ENCODING, HEADERS.JSON);
+
+  if (typeof token === 'string') {
+    test.set(HEADERS.AUTHORIZATION, buildToken(TOKEN_BEARER, token));
+  }
+
+  return test;
 }
 
 export function getDisTags(app, pkgName) {

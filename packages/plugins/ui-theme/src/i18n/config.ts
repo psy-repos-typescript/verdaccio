@@ -28,6 +28,9 @@ i18n
     fallbackLng: DEFAULT_LANGUAGE,
     whitelist: [...listLanguagesAsString],
     load: 'currentOnly',
+    react: {
+      useSuspense: false,
+    },
     resources: languages,
     debug: false,
     interpolation: {

@@ -37,17 +37,24 @@ packages/plugins/ui-theme/static
 /packages/plugins/ui-theme/src/i18n/download_translations/
 !/packages/plugins/ui-theme/src/i18n/crowdin/ui.json
 
+## ui tests
+!/packages/ui-components/vitest/api/*.tgz
 
 # CI Pnpm cache
 .pnpm-store/
 
-# benchmark
-api-results.json
-hyper-results.json
-hyper-results*.json
-api-results*.json
-.clinic/
+#docs
+website/docs/api/**/*.md
+website/docs/api/**/*.yml
+!website/docs/api/index.md
+packages/**/docs
 
-#docs 
-./api
-**/docs/**
+# cypress
+e2e/ui/cypress/videos/**/*
+e2e/ui/cypress/screenshots/**/*
+
+# storybook
+packages/ui-components/storybook-static
+
+# plugin generator
+packages/tools/generator-verdaccio-plugin/generators/

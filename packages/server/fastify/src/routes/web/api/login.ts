@@ -3,7 +3,7 @@ import { FastifyInstance } from 'fastify';
 import _ from 'lodash';
 
 import { validatioUtils } from '@verdaccio/core';
-import { JWTSignOptions } from '@verdaccio/types';
+import { JWTSignOptions, RemoteUser } from '@verdaccio/types';
 
 const debug = buildDebug('verdaccio:fastify:web:login');
 const loginBodySchema = {
@@ -51,7 +51,7 @@ async function loginRoute(fastify: FastifyInstance) {
           } else {
             const jWTSignOptions: JWTSignOptions = fastify.configInstance.security.web.sign;
             debug('jwtSignOptions: %o', jWTSignOptions);
-            const token = await fastify.auth.jwtEncrypt(user, jWTSignOptions);
+            const token = await fastify.auth.jwtEncrypt(user as RemoteUser, jWTSignOptions);
             reply.code(fastify.statusCode.OK).send({ token, username });
           }
         }
@@ -83,30 +83,31 @@ async function loginRoute(fastify: FastifyInstance) {
           fastify.configInstance?.server?.passwordValidationRegex
         ) === false
       ) {
-        fastify.auth.changePassword(
-          name as string,
-          password.old,
-          password.new,
-          (err, isUpdated): void => {
-            if (_.isNil(err) && isUpdated) {
-              reply.code(fastify.statusCode.OK);
-            } else {
-              reply.send(
-                fastify.errorUtils.getInternalError(
-                  fastify.errorUtils.API_ERROR.INTERNAL_SERVER_ERROR
-                )
-              );
-            }
-          }
-        );
-      } else {
         reply.send(
           fastify.errorUtils.getCode(
             fastify.statusCode.BAD_REQUEST,
             fastify.errorUtils.APP_ERROR.PASSWORD_VALIDATION
           )
         );
+        return;
       }
+
+      fastify.auth.changePassword(
+        name as string,
+        password.old,
+        password.new,
+        (err, isUpdated): void => {
+          if (_.isNil(err) && isUpdated) {
+            reply.code(fastify.statusCode.OK);
+          } else {
+            reply.send(
+              fastify.errorUtils.getInternalError(
+                fastify.errorUtils.API_ERROR.INTERNAL_SERVER_ERROR
+              )
+            );
+          }
+        }
+      );
     }
   );
   // });

@@ -46,9 +46,7 @@ export class InitCommand extends Command {
   });
 
   private initLogger(logConfig: ConfigYaml) {
-    // @ts-expect-error
     if (logConfig.logs) {
-      // @ts-expect-error
       logConfig.log = logConfig.logs;
       warningUtils.emit(warningUtils.Codes.VERWAR002);
     }
@@ -60,6 +58,7 @@ export class InitCommand extends Command {
       const configPathLocation = findConfigFile(this.config as string);
       const configParsed = parseConfigFile(configPathLocation);
       this.initLogger(configParsed);
+      logger.info({ file: configPathLocation }, 'using config file: @{file}');
       const { web } = configParsed;
 
       process.title = web?.title || DEFAULT_PROCESS_NAME;
@@ -67,6 +66,9 @@ export class InitCommand extends Command {
       const { version, name } = require('../../package.json');
 
       await initServer(configParsed, this.port as string, version, name);
+
+      const logLevel = configParsed.log?.level || 'default';
+      logger.info({ logLevel }, 'log level: @{logLevel}');
       logger.info('server started');
     } catch (err: any) {
       console.error(err);

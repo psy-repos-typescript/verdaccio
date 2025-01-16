@@ -1,0 +1,28 @@
+on:
+  workflow_call:
+  
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+    - name: Use Node (latest)
+      uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+      with:
+        node-version-file: '.nvmrc'
+    - name: Install
+      run: yarn install
+    - name: Build
+      run: yarn build
+    - name: Types
+      run: yarn code:types      
+    - name: Publish
+      run: sh scripts/publish.sh
+      env:
+        REGISTRY_AUTH_TOKEN: ${{ secrets.REGISTRY_AUTH_TOKEN }}
+        REGISTRY_URL: registry.npmjs.org
+    - name: Create release notes
+      run: sh scripts/github-release.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

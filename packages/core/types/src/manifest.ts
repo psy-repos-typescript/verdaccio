@@ -3,7 +3,7 @@ export interface PackageAccess {
   publish?: string[];
   proxy?: string[];
   access?: string[];
-  unpublish: string[];
+  unpublish?: string[];
 }
 
 export interface PackageList {
@@ -89,6 +89,12 @@ export interface Tags {
   [key: string]: Version;
 }
 
+export interface PeerDependenciesMeta {
+  [dependencyName: string]: {
+    optional?: boolean;
+  };
+}
+
 export interface Version {
   name: string;
   version: string;
@@ -116,7 +122,9 @@ export interface Version {
   peerDependencies?: Dependencies;
   devDependencies?: Dependencies;
   optionalDependencies?: Dependencies;
-  bundleDependencies?: Dependencies;
+  peerDependenciesMeta?: PeerDependenciesMeta;
+  bundleDependencies?: string[];
+  acceptDependencies?: Dependencies;
   keywords?: string | string[];
   nodeVersion?: string;
   _id: string;
@@ -127,6 +135,8 @@ export interface Version {
   funding?: { type: string; url: string };
   engines?: Engines;
   hasInstallScript?: boolean;
+  cpu?: string[];
+  os?: string[];
 }
 
 export interface Dependencies {
@@ -169,7 +179,9 @@ export interface FullRemoteManifest {
   'dist-tags': GenericBody;
   time: GenericBody;
   versions: Versions;
+  /** store owners of this package */
   maintainers?: Author[];
+  contributors?: Author[];
   /** store the latest readme **/
   readme?: string;
   /** store star assigned to this packages by users */
@@ -214,7 +226,6 @@ export type AbbreviatedVersion = Pick<
   Version,
   | 'name'
   | 'version'
-  | 'description'
   | 'dependencies'
   | 'devDependencies'
   | 'bin'
@@ -222,6 +233,15 @@ export type AbbreviatedVersion = Pick<
   | 'engines'
   | 'funding'
   | 'peerDependencies'
+  | 'cpu'
+  | 'deprecated'
+  | 'directories'
+  | 'hasInstallScript'
+  | 'optionalDependencies'
+  | 'os'
+  | 'peerDependenciesMeta'
+  | 'acceptDependencies'
+  | '_hasShrinkwrap'
 >;
 
 export interface AbbreviatedVersions {
@@ -234,6 +254,11 @@ export type AbbreviatedManifest = Pick<Manifest, 'name' | 'dist-tags' | 'time'> 
   modified: string;
   versions: AbbreviatedVersions;
 };
+
+/**
+ *
+ */
+export type UnPublishManifest = Omit<Manifest, '_attachments' | '_distfiles' | '_uplinks'>;
 
 export interface PublishManifest {
   /**

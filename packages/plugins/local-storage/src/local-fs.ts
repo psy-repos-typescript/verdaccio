@@ -5,9 +5,9 @@ import path from 'path';
 import sanitzers from 'sanitize-filename';
 import { Readable, Writable, addAbortSignal } from 'stream';
 
-import { VerdaccioError, errorUtils } from '@verdaccio/core';
+import { VerdaccioError, errorUtils, pluginUtils } from '@verdaccio/core';
 import { readFileNext, unlockFileNext } from '@verdaccio/file-locking';
-import { ILocalPackageManager, Logger, Manifest } from '@verdaccio/types';
+import { Logger, Manifest } from '@verdaccio/types';
 
 import {
   accessPromise,
@@ -27,7 +27,7 @@ export const noSuchFile = 'ENOENT';
 export const resourceNotAvailable = 'EAGAIN';
 export const packageJSONFileName = 'package.json';
 
-export type ILocalFSPackageManager = ILocalPackageManager & { path: string };
+export type ILocalFSPackageManager = pluginUtils.StorageHandler & { path: string };
 
 const debug = buildDebug('verdaccio:plugin:local-storage:local-fs');
 
@@ -107,7 +107,7 @@ export default class LocalFS implements ILocalFSPackageManager {
       // we ensure lock the file
       this.logger.error(
         { err, packageName },
-        'error @{err.message}  on update package @{packageName}'
+        'error on update package @{packageName}: @{err.message}'
       );
       if (locked) {
         // eslint-disable-next-line no-useless-catch
@@ -158,7 +158,7 @@ export default class LocalFS implements ILocalFSPackageManager {
         debug('dir: %o does not exist %s', pathName, err?.code);
         return false;
       } else {
-        this.logger.error('error on verify a package exist %o', err);
+        this.logger.error({ err }, 'error on verify a package exist: @{err.message}');
         throw errorUtils.getInternalError('error on verify a package exist');
       }
     }
@@ -170,7 +170,7 @@ export default class LocalFS implements ILocalFSPackageManager {
    * @param manifest package manifest
    */
   public async createPackage(name: string, manifest: Manifest): Promise<void> {
-    debug('create a a new package %o', name);
+    debug('create a new package %o', name);
     const pathPackage = this._getStorage(packageJSONFileName);
     try {
       // https://nodejs.org/dist/latest-v17.x/docs/api/fs.html#file-system-flags
@@ -204,7 +204,7 @@ export default class LocalFS implements ILocalFSPackageManager {
     } catch (err: any) {
       if (err.code !== noSuchFile) {
         debug('parse error');
-        this.logger.error({ err, name }, 'error @{err.message}  on parse @{name}');
+        this.logger.error({ err, name }, 'error on parse @{name}: @{err.message}');
       }
       throw err;
     }
@@ -237,6 +237,7 @@ export default class LocalFS implements ILocalFSPackageManager {
   public async writeTarball(fileName: string, { signal }): Promise<Writable> {
     debug('write a tarball %o', fileName);
     const pathName: string = this._getStorage(fileName);
+    await this.checkCreateFolder(pathName);
     // create a temporary file to avoid conflicts or prev corruption files
     const temporalName = path.join(
       this.path,
@@ -254,8 +255,8 @@ export default class LocalFS implements ILocalFSPackageManager {
     writeStream.on('error', async (err) => {
       if (opened) {
         this.logger.error(
-          { err: err.message, fileName },
-          'error on open write tarball for @{pkgName}'
+          { err, fileName },
+          'error on open write tarball for @{fileName}: @{err.message}'
         );
         // TODO: maybe add .once
         writeStream.on('close', async () => {
@@ -263,8 +264,8 @@ export default class LocalFS implements ILocalFSPackageManager {
         });
       } else {
         this.logger.error(
-          { err: err.message, fileName },
-          'error a non open write tarball for @{pkgName}'
+          { err, fileName },
+          'error on writing tarball for @{fileName}: @{err.message}'
         );
         await this.removeTempFile(temporalName);
       }
@@ -278,8 +279,9 @@ export default class LocalFS implements ILocalFSPackageManager {
         await renameTmp(temporalName, pathName);
       } catch (err) {
         this.logger.error(
-          { err },
-          'error on rename temporal file, please report this is a bug @{err}'
+          { err, temporalName, pathName },
+          'error on rename temporal file @{temporalName} to @{pathName}: @{err.message},' +
+            'please report this bug'
         );
       }
     });
@@ -323,7 +325,7 @@ export default class LocalFS implements ILocalFSPackageManager {
       }
     });
     readStream.on('error', (error) => {
-      debug('not tarball found %o for %s message %s', pathName, tarballName, error.message);
+      debug('no tarball found %o for %s message %s', pathName, tarballName, error.message);
     });
     return readStream;
   }
@@ -331,7 +333,6 @@ export default class LocalFS implements ILocalFSPackageManager {
   private async _readStorageFile(name: string): Promise<any> {
     debug('reading the file: %o', name);
     try {
-      debug('reading the file: %o', name);
       return await readFilePromise(name);
     } catch (err: any) {
       debug('error reading the file: %o with error %o', name, err.message);
@@ -352,8 +353,8 @@ export default class LocalFS implements ILocalFSPackageManager {
   private async writeTempFileAndRename(dest: string, fileContent: string): Promise<any> {
     const tempFilePath = tempFile(dest);
     try {
-      // write file on temp locatio
-      // TODO: we need to handle when directory does not exist
+      // write file on temp location
+      await this.checkCreateFolder(tempFilePath);
       await writeFilePromise(tempFilePath, fileContent);
       debug('creating a new file:: %o', dest);
       // rename tmp file to original
@@ -370,16 +371,30 @@ export default class LocalFS implements ILocalFSPackageManager {
       debug('write file success %s', destiny);
     } catch (err: any) {
       if (err && err.code === noSuchFile) {
-        const dir = path.dirname(destiny);
-        // if fails, we create the folder for the package
-        debug('write file has failed, creating folder %s', dir);
-        await mkdirPromise(dir, { recursive: true });
+        await this.checkCreateFolder(destiny);
         // we try again create the temp file
         debug('writing a temp file %s', destiny);
         await this.writeTempFileAndRename(destiny, fileContent);
         debug('write file success %s', destiny);
       } else {
-        this.logger.error({ err: err.message }, 'error on write file @{err}');
+        this.logger.error({ err }, 'error on write file: @{err.message}');
+        throw err;
+      }
+    }
+  }
+
+  private async checkCreateFolder(pathName: string): Promise<void> {
+    // Check if folder exists and create it if not
+    const dir = path.dirname(pathName);
+    try {
+      await accessPromise(dir);
+    } catch (err: any) {
+      if (err.code === noSuchFile) {
+        debug('folder does not exist %o', dir);
+        await mkdirPromise(dir, { recursive: true });
+        debug('folder %o created', dir);
+      } else {
+        debug('error on check folder %o', dir);
         throw err;
       }
     }
@@ -395,7 +410,7 @@ export default class LocalFS implements ILocalFSPackageManager {
       });
       return data;
     } catch (err) {
-      this.logger.error({ err }, 'error on lock file @{err.message}');
+      this.logger.error({ err }, 'error on lock file: @{err.message}');
       debug('error on lock and read json for file: %o', name);
 
       throw err;

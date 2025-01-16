@@ -2,15 +2,16 @@ import buildDebug from 'debug';
 import { Router } from 'express';
 import _ from 'lodash';
 
-import { IAuth } from '@verdaccio/auth';
+import { Auth } from '@verdaccio/auth';
 import { logger } from '@verdaccio/logger';
 import { $NextFunctionVer, $RequestExtend, $ResponseExtend } from '@verdaccio/middleware';
+import { WebUrls } from '@verdaccio/middleware';
 import { Storage } from '@verdaccio/store';
 import { getLocalRegistryTarballUri } from '@verdaccio/tarball';
 import { Config, RemoteUser, Version } from '@verdaccio/types';
 import { formatAuthor, generateGravatarUrl } from '@verdaccio/utils';
 
-import { sortByName } from '../utils/web-utils';
+import { sortByName } from '../web-utils';
 
 export { $RequestExtend, $ResponseExtend, $NextFunctionVer }; // Was required by other packages
 
@@ -20,7 +21,7 @@ const getOrder = (order = 'asc') => {
 
 const debug = buildDebug('verdaccio:web:api:package');
 
-function addPackageWebApi(storage: Storage, auth: IAuth, config: Config): Router {
+function addPackageWebApi(storage: Storage, auth: Auth, config: Config): Router {
   const isLoginEnabled = config?.web?.login === true ?? true;
   const pkgRouter = Router(); /* eslint new-cap: 0 */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -41,7 +42,7 @@ function addPackageWebApi(storage: Storage, auth: IAuth, config: Config): Router
           if (err) {
             resolve(false);
           }
-          resolve(allowed);
+          return resolve(allowed as boolean);
         });
       } catch (err: any) {
         reject(err);
@@ -88,7 +89,7 @@ function addPackageWebApi(storage: Storage, auth: IAuth, config: Config): Router
 
   // Get list of all visible package
   pkgRouter.get(
-    '/packages',
+    WebUrls.packages_all,
     async function (
       req: $RequestExtend,
       res: $ResponseExtend,
@@ -97,7 +98,7 @@ function addPackageWebApi(storage: Storage, auth: IAuth, config: Config): Router
       debug('hit package web api %o');
 
       try {
-        const localPackages: Version[] = await storage.getLocalDatabaseNext();
+        const localPackages: Version[] = await storage.getLocalDatabase();
 
         const order = getOrder(config?.web?.sort_packages);
         debug('order %o', order);

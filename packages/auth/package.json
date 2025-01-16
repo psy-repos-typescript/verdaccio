@@ -1,9 +1,9 @@
 {
   "name": "@verdaccio/auth",
-  "version": "6.0.0-6-next.26",
+  "version": "8.0.0-next-8.7",
   "description": "logger",
   "main": "./build/index.js",
-  "types": "build/index.d.ts",
+  "types": "./build/index.d.ts",
   "author": {
     "name": "Juan Picado",
     "email": "juanpicado19@gmail.com"
@@ -25,12 +25,11 @@
     "verdaccio"
   ],
   "engines": {
-    "node": ">=14",
-    "npm": ">=6"
+    "node": ">=18"
   },
   "scripts": {
     "clean": "rimraf ./build",
-    "test": "jest",
+    "test": "vitest run",
     "type-check": "tsc --noEmit -p tsconfig.build.json",
     "build:types": "tsc --emitDeclarationOnly -p tsconfig.build.json",
     "build:js": "babel src/ --out-dir build/ --copy-files --extensions \".ts,.tsx\" --source-maps",
@@ -39,19 +38,21 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@verdaccio/core": "workspace:6.0.0-6-next.47",
-    "@verdaccio/config": "workspace:6.0.0-6-next.47",
-    "@verdaccio/loaders": "workspace:6.0.0-6-next.16",
-    "@verdaccio/logger": "workspace:6.0.0-6-next.15",
-    "@verdaccio/utils": "workspace:6.0.0-6-next.15",
-    "debug": "4.3.4",
-    "express": "4.18.1",
-    "jsonwebtoken": "8.5.1",
+    "@verdaccio/config": "workspace:8.0.0-next-8.7",
+    "@verdaccio/core": "workspace:8.0.0-next-8.7",
+    "@verdaccio/loaders": "workspace:8.0.0-next-8.4",
+    "@verdaccio/signature": "workspace:8.0.0-next-8.1",
+    "@verdaccio/utils": "workspace:8.1.0-next-8.7",
+    "debug": "4.4.0",
     "lodash": "4.17.21",
-    "verdaccio-htpasswd": "workspace:11.0.0-6-next.17"
+    "verdaccio-htpasswd": "workspace:13.0.0-next-8.7"
   },
   "devDependencies": {
-    "@verdaccio/types": "workspace:11.0.0-6-next.16"
+    "@verdaccio/middleware": "workspace:8.0.0-next-8.7",
+    "@verdaccio/types": "workspace:13.0.0-next-8.2",
+    "@verdaccio/logger": "workspace:8.0.0-next-8.7",
+    "express": "4.21.2",
+    "supertest": "7.0.0"
   },
   "funding": {
     "type": "opencollective",

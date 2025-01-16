@@ -1,36 +1,47 @@
 import buildDebug from 'debug';
-import { NextFunction, Request, Response } from 'express';
 import _ from 'lodash';
 import { HTPasswd } from 'verdaccio-htpasswd';
 
 import { createAnonymousRemoteUser, createRemoteUser } from '@verdaccio/config';
 import {
   API_ERROR,
+  PLUGIN_CATEGORY,
   SUPPORT_ERRORS,
   TOKEN_BASIC,
   TOKEN_BEARER,
   VerdaccioError,
   errorUtils,
+  pluginUtils,
+  warningUtils,
 } from '@verdaccio/core';
 import { asyncLoadPlugin } from '@verdaccio/loaders';
 import {
+  aesEncrypt,
+  aesEncryptDeprecated,
+  parseBasicPayload,
+  signPayload,
+  utils as signatureUtils,
+} from '@verdaccio/signature';
+import {
   AllowAccess,
-  AuthPluginPackage,
   Callback,
   Config,
-  IPluginAuth,
   JWTSignOptions,
   Logger,
   PackageAccess,
-  PluginOptions,
   RemoteUser,
   Security,
 } from '@verdaccio/types';
 import { getMatchedPackagesSpec, isFunction, isNil } from '@verdaccio/utils';
 
-import { signPayload } from './jwt-token';
-import { aesEncrypt } from './legacy-token';
-import { parseBasicPayload } from './token';
+import {
+  $RequestExtend,
+  $ResponseExtend,
+  AESPayload,
+  IAuthMiddleware,
+  NextFunction,
+  TokenEncryption,
+} from './types';
 import {
   convertPayloadToBase64,
   getDefaultPlugins,
@@ -41,60 +52,18 @@ import {
   verifyJWTPayload,
 } from './utils';
 
-/* eslint-disable @typescript-eslint/no-var-requires */
-const LoggerApi = require('@verdaccio/logger');
-
 const debug = buildDebug('verdaccio:auth');
 
-export interface IBasicAuth<T> {
-  config: T & Config;
-  authenticate(user: string, password: string, cb: Callback): void;
-  invalidateToken?(token: string): Promise<void>;
-  changePassword(user: string, password: string, newPassword: string, cb: Callback): void;
-  allow_access(pkg: AuthPluginPackage, user: RemoteUser, callback: Callback): void;
-  add_user(user: string, password: string, cb: Callback): any;
-}
-
-export interface TokenEncryption {
-  jwtEncrypt(user: RemoteUser, signOptions: JWTSignOptions): Promise<string>;
-  aesEncrypt(buf: string): string | void;
-}
-
-export interface AESPayload {
-  user: string;
-  password: string;
-}
-
-export type $RequestExtend = Request & { remote_user?: any; log: Logger };
-export type $ResponseExtend = Response & { cookies?: any };
-export type $NextFunctionVer = NextFunction & any;
-
-export interface IAuthMiddleware {
-  apiJWTmiddleware(): $NextFunctionVer;
-  webUIJWTmiddleware(): $NextFunctionVer;
-}
-
-export interface IAuth extends IBasicAuth<Config>, IAuthMiddleware, TokenEncryption {
-  config: Config;
-  logger: Logger;
-  secret: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  plugins: any[];
-  allow_unpublish(pkg: AuthPluginPackage, user: RemoteUser, callback: Callback): void;
-  invalidateToken(token: string): Promise<void>;
-  init(): Promise<void>;
-}
-
-class Auth implements IAuth {
+class Auth implements IAuthMiddleware, TokenEncryption, pluginUtils.IBasicAuth {
   public config: Config;
-  public logger: Logger;
   public secret: string;
-  public plugins: IPluginAuth<Config>[];
+  public logger: Logger;
+  public plugins: pluginUtils.Auth<Config>[];
 
-  public constructor(config: Config) {
+  public constructor(config: Config, logger: Logger) {
     this.config = config;
-    this.logger = LoggerApi.logger.child({ sub: 'auth' });
     this.secret = config.secret;
+    this.logger = logger;
     this.plugins = [];
     if (!this.secret) {
       throw new TypeError('secret it is required value on initialize the auth class');
@@ -102,7 +71,8 @@ class Auth implements IAuth {
   }
 
   public async init() {
-    let plugins = await this.loadPlugin();
+    let plugins = (await this.loadPlugin()) as pluginUtils.Auth<unknown>[];
+
     debug('auth plugins found %s', plugins.length);
     if (!plugins || plugins.length === 0) {
       plugins = this.loadDefaultPlugin();
@@ -114,35 +84,47 @@ class Auth implements IAuth {
 
   private loadDefaultPlugin() {
     debug('load default auth plugin');
-    const pluginOptions: PluginOptions = {
+    const pluginOptions: pluginUtils.PluginOptions = {
       config: this.config,
       logger: this.logger,
     };
     let authPlugin;
     try {
-      authPlugin = new HTPasswd({ file: './htpasswd' }, pluginOptions as any as PluginOptions);
+      authPlugin = new HTPasswd(
+        { file: './htpasswd' },
+        pluginOptions as any as pluginUtils.PluginOptions
+      );
+      this.logger.info(
+        { name: 'verdaccio-htpasswd', pluginCategory: PLUGIN_CATEGORY.AUTHENTICATION },
+        'plugin @{name} successfully loaded (@{pluginCategory})'
+      );
     } catch (error: any) {
       debug('error on loading auth htpasswd plugin stack: %o', error);
+      this.logger.info({}, 'no auth plugin has been found');
       return [];
     }
 
     return [authPlugin];
   }
 
-  private async loadPlugin(): Promise<IPluginAuth<Config>[]> {
-    return asyncLoadPlugin<IPluginAuth<Config>>(
+  private async loadPlugin() {
+    return asyncLoadPlugin<pluginUtils.Auth<unknown>>(
       this.config.auth,
       {
         config: this.config,
         logger: this.logger,
       },
-      (plugin: IPluginAuth<Config>): boolean => {
+      (plugin): boolean => {
         const { authenticate, allow_access, allow_publish } = plugin;
 
-        // @ts-ignore
-        return authenticate || allow_access || allow_publish;
+        return (
+          typeof authenticate !== 'undefined' ||
+          typeof allow_access !== 'undefined' ||
+          typeof allow_publish !== 'undefined'
+        );
       },
-      this.config?.serverSettings?.pluginPrefix
+      this.config?.serverSettings?.pluginPrefix,
+      PLUGIN_CATEGORY.AUTHENTICATION
     );
   }
 
@@ -192,17 +174,21 @@ class Auth implements IAuth {
     return Promise.resolve();
   }
 
-  public authenticate(username: string, password: string, cb: Callback): void {
+  public authenticate(
+    username: string,
+    password: string,
+    cb: (error: VerdaccioError | null, user?: RemoteUser) => void
+  ): void {
     const plugins = this.plugins.slice(0);
     (function next(): void {
-      const plugin = plugins.shift() as IPluginAuth<Config>;
+      const plugin = plugins.shift() as pluginUtils.Auth<Config>;
 
       if (isFunction(plugin.authenticate) === false) {
         return next();
       }
 
       debug('authenticating %o', username);
-      plugin.authenticate(username, password, function (err, groups): void {
+      plugin.authenticate(username, password, function (err: VerdaccioError | null, groups): void {
         if (err) {
           debug('authenticating for user %o failed. Error: %o', username, err?.message);
           return cb(err);
@@ -233,37 +219,45 @@ class Auth implements IAuth {
     })();
   }
 
-  public add_user(user: string, password: string, cb: Callback): void {
+  public add_user(
+    user: string,
+    password: string,
+    cb: (error: VerdaccioError | null, user?: RemoteUser) => void
+  ): void {
     const self = this;
     const plugins = this.plugins.slice(0);
     debug('add user %o', user);
 
     (function next(): void {
-      const plugin = plugins.shift() as IPluginAuth<Config>;
       let method = 'adduser';
-      if (isFunction(plugin[method]) === false) {
+      const plugin = plugins.shift() as pluginUtils.Auth<Config>;
+      // @ts-expect-error future major (7.x) should remove this section
+      if (typeof plugin.adduser === 'undefined' && typeof plugin.add_user === 'function') {
         method = 'add_user';
-        self.logger.warn(
-          'the plugin method add_user in the auth plugin is deprecated and will' +
-            ' be removed in next major release, notify to the plugin author'
-        );
+        warningUtils.emit(warningUtils.Codes.VERWAR006);
       }
-
-      if (isFunction(plugin[method]) === false) {
+      // @ts-ignore
+      if (typeof plugin[method] !== 'function') {
         next();
       } else {
-        // p.add_user() execution
-        plugin[method](user, password, function (err, ok): void {
-          if (err) {
-            debug('the user  %o could not being added. Error: %o', user, err?.message);
-            return cb(err);
+        // TODO: replace by adduser whenever add_user deprecation method has been removed
+        // @ts-ignore
+        plugin[method](
+          user,
+          password,
+          function (err: VerdaccioError | null, ok?: boolean | string): void {
+            if (err) {
+              debug('the user %o could not be added. Error: %o', user, err?.message);
+              return cb(err);
+            }
+            if (ok) {
+              debug('the user %o has been added', user);
+              return self.authenticate(user, password, cb);
+            }
+            debug('user could not be added, skip to next auth plugin');
+            next();
           }
-          if (ok) {
-            debug('the user %o has been added', user);
-            return self.authenticate(user, password, cb);
-          }
-          next();
-        });
+        );
       }
     })();
   }
@@ -272,27 +266,27 @@ class Auth implements IAuth {
    * Allow user to access a package.
    */
   public allow_access(
-    { packageName, packageVersion }: AuthPluginPackage,
+    { packageName, packageVersion }: pluginUtils.AuthPluginPackage,
     user: RemoteUser,
-    callback: Callback
+    callback: pluginUtils.AccessCallback
   ): void {
     const plugins = this.plugins.slice(0);
-    const pkgAllowAcces: AllowAccess = { name: packageName, version: packageVersion };
+    const pkgAllowAccess: AllowAccess = { name: packageName, version: packageVersion };
     const pkg = Object.assign(
       {},
-      pkgAllowAcces,
+      pkgAllowAccess,
       getMatchedPackagesSpec(packageName, this.config.packages)
     ) as AllowAccess & PackageAccess;
     debug('allow access for %o', packageName);
 
     (function next(): void {
-      const plugin: IPluginAuth<Config> = plugins.shift() as IPluginAuth<Config>;
+      const plugin: pluginUtils.Auth<unknown> = plugins.shift() as pluginUtils.Auth<unknown>;
 
       if (_.isNil(plugin) || isFunction(plugin.allow_access) === false) {
         return next();
       }
 
-      plugin.allow_access!(user, pkg, function (err, ok: boolean): void {
+      plugin.allow_access!(user, pkg, function (err: VerdaccioError | null, ok?: boolean): void {
         if (err) {
           debug('forbidden access for %o. Error: %o', packageName, err?.message);
           return callback(err);
@@ -309,7 +303,7 @@ class Auth implements IAuth {
   }
 
   public allow_unpublish(
-    { packageName, packageVersion }: AuthPluginPackage,
+    { packageName, packageVersion }: pluginUtils.AuthPluginPackage,
     user: RemoteUser,
     callback: Callback
   ): void {
@@ -320,12 +314,11 @@ class Auth implements IAuth {
     debug('allow unpublish for %o', packageName);
 
     for (const plugin of this.plugins) {
-      if (_.isNil(plugin) || isFunction(plugin.allow_unpublish) === false) {
+      if (typeof plugin?.allow_unpublish !== 'function') {
         debug('allow unpublish for %o plugin does not implement allow_unpublish', packageName);
         continue;
       } else {
-        // @ts-ignore
-        plugin.allow_unpublish!(user, pkg, (err, ok: boolean): void => {
+        plugin.allow_unpublish(user, pkg, (err, ok): void => {
           if (err) {
             debug(
               'forbidden publish for %o, it will fallback on unpublish permissions',
@@ -336,9 +329,7 @@ class Auth implements IAuth {
 
           if (_.isNil(ok) === true) {
             debug('bypass unpublish for %o, publish will handle the access', packageName);
-            // @ts-ignore
-            // eslint-disable-next-line
-            return this.allow_publish(...arguments);
+            return this.allow_publish({ packageName, packageVersion }, user, callback);
           }
 
           if (ok) {
@@ -354,7 +345,7 @@ class Auth implements IAuth {
    * Allow user to publish a package.
    */
   public allow_publish(
-    { packageName, packageVersion }: AuthPluginPackage,
+    { packageName, packageVersion }: pluginUtils.AuthPluginPackage,
     user: RemoteUser,
     callback: Callback
   ): void {
@@ -368,36 +359,29 @@ class Auth implements IAuth {
     (function next(): void {
       const plugin = plugins.shift();
 
-      if (isFunction(plugin?.allow_publish) === false) {
+      if (typeof plugin?.allow_publish !== 'function') {
         debug('allow publish for %o plugin does not implement allow_publish', packageName);
         return next();
       }
 
-      // @ts-ignore
-      plugin.allow_publish(
-        user,
-        // @ts-ignore
-        pkg,
-        // @ts-ignore
-        (err: VerdaccioError, ok: boolean): void => {
-          if (_.isNil(err) === false && _.isError(err)) {
-            debug('forbidden publish for %o', packageName);
-            return callback(err);
-          }
-
-          if (ok) {
-            debug('allowed publish for %o', packageName);
-            return callback(null, ok);
-          }
-
-          debug('allow publish skip validation for %o', packageName);
-          next(); // cb(null, false) causes next plugin to roll
+      plugin.allow_publish(user, pkg, (err: VerdaccioError | null, ok?: boolean): void => {
+        if (_.isNil(err) === false && _.isError(err)) {
+          debug('forbidden publish for %o', packageName);
+          return callback(err);
         }
-      );
+
+        if (ok) {
+          debug('allowed publish for %o', packageName);
+          return callback(null, ok);
+        }
+
+        debug('allow publish skip validation for %o', packageName);
+        next(); // cb(null, false) causes next plugin to roll
+      });
     })();
   }
 
-  public apiJWTmiddleware(): Function {
+  public apiJWTmiddleware(): any {
     debug('jwt middleware');
     const plugins = this.plugins.slice(0);
     const helpers = { createAnonymousRemoteUser, createRemoteUser };
@@ -407,10 +391,9 @@ class Auth implements IAuth {
       }
     }
 
-    return (req: $RequestExtend, res: $ResponseExtend, _next: NextFunction): void => {
+    return (req: $RequestExtend, res: $ResponseExtend, _next: NextFunction) => {
       req.pause();
-
-      const next = function (err: VerdaccioError | void): void {
+      const next = function (err?: VerdaccioError): NextFunction {
         req.resume();
         // uncomment this to reject users with bad auth headers
         // return _next.apply(null, arguments)
@@ -419,13 +402,15 @@ class Auth implements IAuth {
         if (err) {
           req.remote_user.error = err.message;
         }
-        return _next();
+
+        return _next() as unknown as NextFunction;
       };
 
-      if (this._isRemoteUserValid(req.remote_user)) {
-        debug('jwt has a valid authentication header');
-        return next();
-      }
+      // FUTURE: disabled, not removed yet but seems unreacable code
+      // if (this._isRemoteUserValid(req.remote_user)) {
+      //   debug('jwt has a valid authentication header');
+      //   return next();
+      // }
 
       // in case auth header does not exist we return anonymous function
       const remoteUser = createAnonymousRemoteUser();
@@ -446,20 +431,20 @@ class Auth implements IAuth {
 
       if (isAESLegacy(security)) {
         debug('api middleware using legacy auth token');
-        this._handleAESMiddleware(req, security, secret, authorization, next);
+        this.handleAESMiddleware(req, security, secret, authorization, next);
       } else {
         debug('api middleware using JWT auth token');
-        this._handleJWTAPIMiddleware(req, security, secret, authorization, next);
+        this.handleJWTAPIMiddleware(req, security, secret, authorization, next);
       }
     };
   }
 
-  private _handleJWTAPIMiddleware(
+  private handleJWTAPIMiddleware(
     req: $RequestExtend,
     security: Security,
     secret: string,
     authorization: string,
-    next: Function
+    next: any
   ): void {
     debug('handle JWT api middleware');
     const { scheme, token } = parseAuthTokenHeader(authorization);
@@ -469,7 +454,7 @@ class Auth implements IAuth {
       const credentials = convertPayloadToBase64(token).toString();
       const { user, password } = parseBasicPayload(credentials) as AESPayload;
       debug('authenticating %o', user);
-      this.authenticate(user, password, (err, user): void => {
+      this.authenticate(user, password, (err: VerdaccioError | null, user): void => {
         if (!err) {
           debug('generating a remote user');
           req.remote_user = user;
@@ -496,7 +481,7 @@ class Auth implements IAuth {
     }
   }
 
-  private _handleAESMiddleware(
+  private handleAESMiddleware(
     req: $RequestExtend,
     security: Security,
     secret: string,
@@ -504,7 +489,7 @@ class Auth implements IAuth {
     next: Function
   ): void {
     debug('handle legacy api middleware');
-    debug('api middleware secret %o', typeof secret === 'string');
+    debug('api middleware has a secret? %o', typeof secret === 'string');
     debug('api middleware authorization %o', typeof authorization === 'string');
     const credentials: any = getMiddlewareCredentials(security, secret, authorization);
     debug('api middleware credentials %o', credentials?.name);
@@ -529,14 +514,14 @@ class Auth implements IAuth {
     }
   }
 
-  private _isRemoteUserValid(remote_user: RemoteUser): boolean {
-    return _.isUndefined(remote_user) === false && _.isUndefined(remote_user.name) === false;
+  private _isRemoteUserValid(remote_user?: RemoteUser): boolean {
+    return _.isUndefined(remote_user) === false && _.isUndefined(remote_user?.name) === false;
   }
 
   /**
    * JWT middleware for WebUI
    */
-  public webUIJWTmiddleware(): Function {
+  public webUIJWTmiddleware() {
     return (req: $RequestExtend, res: $ResponseExtend, _next: NextFunction): void => {
       if (this._isRemoteUserValid(req.remote_user)) {
         return _next();
@@ -546,7 +531,7 @@ class Auth implements IAuth {
       const next = (err: VerdaccioError | void): void => {
         req.resume();
         if (err) {
-          // req.remote_user.error = err.message;
+          req.remote_user.error = err.message;
           res.status(err.statusCode).send(err.message);
         }
 
@@ -567,7 +552,7 @@ class Auth implements IAuth {
         return next();
       }
 
-      let credentials;
+      let credentials: RemoteUser | undefined;
       try {
         credentials = verifyJWTPayload(token, this.config.secret);
       } catch (err: any) {
@@ -575,9 +560,8 @@ class Auth implements IAuth {
       }
 
       if (this._isRemoteUserValid(credentials)) {
-        const { name, groups } = credentials;
-        // $FlowFixMe
-        req.remote_user = createRemoteUser(name, groups);
+        const { name, groups } = credentials as RemoteUser;
+        req.remote_user = createRemoteUser(name as string, groups);
       } else {
         req.remote_user = createAnonymousRemoteUser();
       }
@@ -590,13 +574,14 @@ class Auth implements IAuth {
     const { real_groups, name, groups } = user;
     debug('jwt encrypt %o', name);
     const realGroupsValidated = _.isNil(real_groups) ? [] : real_groups;
-    const groupedGroups = _.isNil(groups) ? real_groups : groups.concat(realGroupsValidated);
+    const groupedGroups = _.isNil(groups)
+      ? real_groups
+      : Array.from(new Set([...groups.concat(realGroupsValidated)]));
     const payload: RemoteUser = {
       real_groups: realGroupsValidated,
       name,
       groups: groupedGroups,
     };
-
     const token: string = await signPayload(payload, this.secret, signOptions);
 
     return token;
@@ -606,7 +591,16 @@ class Auth implements IAuth {
    * Encrypt a string.
    */
   public aesEncrypt(value: string): string | void {
-    return aesEncrypt(value, this.secret);
+    if (this.secret.length === signatureUtils.TOKEN_VALID_LENGTH) {
+      debug('signing with enhanced aes legacy');
+      const token = aesEncrypt(value, this.secret);
+      return token;
+    } else {
+      debug('signing with enhanced aes deprecated legacy');
+      // deprecated aes (legacy) signature, only must be used for legacy version
+      const token = aesEncryptDeprecated(Buffer.from(value), this.secret).toString('base64');
+      return token;
+    }
   }
 }
 

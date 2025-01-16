@@ -1,9 +1,16 @@
 import _ from 'lodash';
 import semver from 'semver';
 
-import { errorUtils, pkgUtils, validatioUtils } from '@verdaccio/core';
-import { API_ERROR, DIST_TAGS, HTTP_STATUS, USERS } from '@verdaccio/core';
-import { AttachMents, Manifest, Version, Versions } from '@verdaccio/types';
+import { errorUtils, pkgUtils, searchUtils, validatioUtils } from '@verdaccio/core';
+import { API_ERROR, DIST_TAGS, HTTP_STATUS, MAINTAINERS, USERS } from '@verdaccio/core';
+import {
+  AttachMents,
+  GenericBody,
+  Manifest,
+  ReadmeOptions,
+  Version,
+  Versions,
+} from '@verdaccio/types';
 import { generateRandomHexString, isNil, isObject } from '@verdaccio/utils';
 
 import { sortVersionsAndFilterInvalid } from './versions-utils';
@@ -28,6 +35,7 @@ export function generatePackageTemplate(name: string): Manifest {
     time: {},
     [USERS]: {},
     [DIST_TAGS]: {},
+    [MAINTAINERS]: [],
     _uplinks: {},
     _distfiles: {},
     _attachments: {},
@@ -91,10 +99,28 @@ export function getLatestReadme(pkg: Manifest): string {
   return readme;
 }
 
-// FIXME: type any due this
-export function cleanUpReadme(version: any): Version {
+/**
+ * Cleanup readme from package version
+ *
+ * By default, we don't keep readmes for package versions, only one readme per package.
+ * Using publish.keep_readmes you can override this behavior and keep all readmes
+ * or only readmes for tagged versions.
+ */
+export function cleanUpReadme(
+  version: Version,
+  distTags?: GenericBody,
+  keepReadmes?: ReadmeOptions
+): Version {
+  if (keepReadmes === 'all') {
+    return version;
+  } else if (keepReadmes === 'tagged') {
+    if (distTags && Object.values(distTags).includes(version.version)) {
+      return version;
+    }
+  }
+
   if (isNil(version) === false) {
-    delete version.readme;
+    version.readme = '';
   }
 
   return version;
@@ -109,6 +135,7 @@ export const WHITELIST = [
   'time',
   '_id',
   'users',
+  'maintainers',
 ];
 
 export function cleanUpLinksRef(result: Manifest, keepUpLinkData?: boolean): Manifest {
@@ -290,6 +317,8 @@ export function mergeVersions(cacheManifest: Manifest, remoteManifest: Manifest)
     }
   }
 
+  // TODO: Should we merge owners? _cacheManifest[MAINTAINERS]
+
   return cacheManifest;
 }
 
@@ -359,4 +388,38 @@ export function hasDeprecatedVersions(pkgInfo: Manifest): boolean {
 
 export function isDeprecatedManifest(manifest: Manifest): boolean {
   return hasDeprecatedVersions(manifest) && Object.keys(manifest._attachments).length === 0;
+}
+
+export function mapManifestToSearchPackageBody(
+  pkg: Manifest,
+  searchItem: searchUtils.SearchItem
+): searchUtils.SearchPackageBody {
+  const latest = pkgUtils.getLatest(pkg);
+  const version: Version = pkg.versions[latest];
+  const result: searchUtils.SearchPackageBody = {
+    name: version.name,
+    scope: '',
+    description: version.description,
+    version: latest,
+    keywords: version.keywords,
+    date: pkg.time[latest],
+    // FIXME: type
+    author: version.author as any,
+    // FIXME: not possible fill this out from a private package
+    publisher: {},
+    // FIXME: type
+    maintainers: version.maintainers as any,
+    links: {
+      npm: '',
+      homepage: version.homepage,
+      repository: version.repository,
+      bugs: version.bugs,
+    },
+  };
+
+  if (typeof searchItem.package.scoped === 'string') {
+    result.scope = searchItem.package.scoped;
+  }
+
+  return result;
 }

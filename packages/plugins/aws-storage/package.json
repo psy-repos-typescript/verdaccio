@@ -14,8 +14,7 @@
     "verdaccio"
   ],
   "engines": {
-    "node": ">=14",
-    "npm": ">=6"
+    "node": ">=18"
   },
   "author": "Juan Picado <juanpicado19@gmail.com>",
   "license": "MIT",
@@ -32,11 +31,11 @@
   "types": "build/index.d.ts",
   "dependencies": {
     "@verdaccio/core": "workspace:6.0.0-6-next.5",
-    "aws-sdk": "2.1199.0"
+    "aws-sdk": "2.1354.0"
   },
   "devDependencies": {
     "@verdaccio/types": "workspace:11.0.0-6-next.12",
-    "recursive-readdir": "2.2.2"
+    "recursive-readdir": "2.2.3"
   },
   "scripts": {
     "clean": "rimraf ./build",
@@ -44,7 +43,7 @@
     "build:types": "tsc --emitDeclarationOnly -p tsconfig.build.json",
     "build:js": "babel src/ --out-dir build/ --copy-files --extensions \".ts,.tsx\" --source-maps",
     "build": "pnpm run build:js && pnpm run build:types",
-    "test": "jest"
+    "test": "vitest run"
   },
   "funding": {
     "type": "opencollective",

@@ -1,7 +1,6 @@
 import { ChildProcess, fork } from 'child_process';
 import buildDebug from 'debug';
-import { writeFile } from 'fs/promises';
-import getPort from 'get-port';
+import fs from 'fs';
 import path from 'path';
 
 import { fromJStoYAML } from '@verdaccio/config';
@@ -11,43 +10,58 @@ import { buildToken } from '@verdaccio/utils';
 
 import { ServerQuery } from './request';
 
+const { writeFile } = fs.promises ? fs.promises : require('fs/promises');
+
 const buildAuthHeader = (token: string): string => {
   return buildToken(TOKEN_BEARER, token);
 };
 
 const debug = buildDebug('verdaccio:registry');
 
+const defaultOptions: Options = {
+  domain: 'localhost',
+  port: 4873,
+  createUser: false,
+  credentials: {
+    user: 'foo',
+    password: '12345',
+  },
+  debug: false,
+};
+
+type Options = {
+  domain: string;
+  port: number;
+  createUser: boolean;
+  credentials: { user: string; password: string };
+  debug: boolean;
+};
+
 export class Registry {
   private childFork: any;
   private configPath: string;
   private domain: string;
+  private createUser: boolean;
   private authstr: string | null = null;
   private port: number;
   private credentials;
   private token: string | null = null;
   private debug: boolean;
-  public constructor(
-    configPath: string,
-    domain: string = 'localhost',
-    port: number = 8080,
-    credentials = {
-      user: 'fooooo',
-      password: 'sms_8tn>V%zPZ_+6', // pragma: allowlist secret
-    },
-    debug = false
-  ) {
+  public constructor(configPath: string, options: Partial<Options> = {}) {
+    const _options = { ...defaultOptions, ...options };
     this.configPath = configPath;
-    this.port = port;
-    this.domain = domain;
-    this.debug = debug;
-    this.credentials = credentials;
+    this.createUser = _options.createUser;
+    this.port = _options.port;
+    this.domain = _options.domain;
+    this.debug = _options.debug;
+    this.credentials = _options.credentials;
   }
 
   public static async fromConfigToPath(
     config: Partial<ConfigYaml>
   ): Promise<{ tempFolder: string; configPath: string; yamlContent: string }> {
     debug(`fromConfigToPath`);
-    const tempFolder = await fileUtils.createTempFolder('registry-');
+    const tempFolder = await fileUtils.createTempFolder('registry');
     debug(`tempFolder %o`, tempFolder);
     const yamlContent = fromJStoYAML(config) as string;
     const configPath = path.join(tempFolder, 'registry.yaml');
@@ -88,46 +102,47 @@ export class Registry {
     verdaccioPath: string = path.join(__dirname, '../../bin/verdaccio')
   ): Promise<ChildProcess> {
     debug('_start %o', verdaccioPath);
-    return getPort().then((port: number) => {
-      this.port = port;
-      debug('port %o', port);
-      return new Promise((resolve, reject) => {
-        let childOptions = {
-          silent: false,
-        };
+    debug('port %o', this.port);
+    return new Promise((resolve, reject) => {
+      let childOptions = {
+        silent: false,
+      };
 
-        if (this.debug) {
-          const debugPort = port + 5;
-          debug('debug port %o', debugPort);
-          childOptions = Object.assign({}, childOptions, {
-            execArgv: [`--inspect=${debugPort}`],
-            env: {
-              DEBUG: process.env.DEBUG,
-              VERDACCIO_SERVER: process.env.VERDACCIO_SERVER,
-            },
-          });
-        } else {
-          childOptions = Object.assign({}, childOptions, {
-            env: {
-              DEBUG: process.env.DEBUG,
-              VERDACCIO_SERVER: process.env.VERDACCIO_SERVER,
-            },
-          });
-        }
+      if (this.debug) {
+        const debugPort = this.port + 5;
+        debug('debug port %o', debugPort);
+        childOptions = Object.assign({}, childOptions, {
+          execArgv: [`--inspect=${debugPort}`],
+          env: {
+            DEBUG: process.env.DEBUG,
+            VERDACCIO_SERVER: process.env.VERDACCIO_SERVER,
+          },
+        });
+      } else {
+        childOptions = Object.assign({}, childOptions, {
+          env: {
+            DEBUG: process.env.DEBUG,
+            VERDACCIO_SERVER: process.env.VERDACCIO_SERVER,
+          },
+        });
+      }
 
-        const { configPath } = this;
-        debug('configPath %s', configPath);
-        debug('port %s', port);
-        this.childFork = fork(verdaccioPath, ['-c', configPath, '-l', String(port)], childOptions);
+      const { configPath } = this;
+      debug('configPath %s', configPath);
+      debug('port %s', this.port);
+      this.childFork = fork(
+        verdaccioPath,
+        ['-c', configPath, '-l', String(this.port)],
+        childOptions
+      );
 
-        this.childFork.on('message', async (msg: any) => {
-          // verdaccio_started is a message that comes from verdaccio in debug mode that
-          // notify has been started
-          try {
-            if ('verdaccio_started' in msg) {
-              const server = new ServerQuery(`http://${this.domain}:` + port);
-              // const req = await server.debug();
-              // req.status(HTTP_STATUS.OK);
+      this.childFork.on('message', async (msg: any) => {
+        // verdaccio_started is a message that comes from verdaccio in debug mode that
+        // notify has been started
+        try {
+          if ('verdaccio_started' in msg) {
+            const server = new ServerQuery(`http://${this.domain}:` + this.port);
+            if (this.createUser) {
               const user = await server.createUser(
                 this.credentials.user,
                 this.credentials.password
@@ -136,29 +151,30 @@ export class Registry {
               // @ts-ignore
               this.token = user?.response?.body.token;
               this.authstr = buildAuthHeader(this.token as string);
-              return resolve(this.childFork);
             }
-          } catch (e) {
-            // eslint-disable-next-line no-console
-            console.error(e);
-            // eslint-disable-next-line prefer-promise-reject-errors
-            return reject([e, this]);
-          }
-        });
 
-        this.childFork.on('error', (err) => {
-          debug('error  %s', err);
+            return resolve(this.childFork);
+          }
+        } catch (e: any) {
+          // eslint-disable-next-line no-console
+          console.error(e);
           // eslint-disable-next-line prefer-promise-reject-errors
-          reject([err, this]);
-        });
-        this.childFork.on('disconnect', (err) => {
-          // eslint-disable-next-line prefer-promise-reject-errors
-          reject([err, this]);
-        });
-        this.childFork.on('exit', (err) => {
-          // eslint-disable-next-line prefer-promise-reject-errors
-          reject([err, this]);
-        });
+          return reject([e, this]);
+        }
+      });
+
+      this.childFork.on('error', (err) => {
+        debug('error  %s', err);
+        // eslint-disable-next-line prefer-promise-reject-errors
+        reject([err, this]);
+      });
+      this.childFork.on('disconnect', (err) => {
+        // eslint-disable-next-line prefer-promise-reject-errors
+        reject([err, this]);
+      });
+      this.childFork.on('exit', (err) => {
+        // eslint-disable-next-line prefer-promise-reject-errors
+        reject([err, this]);
       });
     });
   }

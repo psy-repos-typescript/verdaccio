@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from 'fs/promises';
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -6,13 +6,15 @@ export const Files = {
   DatabaseName: '.verdaccio-db.json',
 };
 
+const { mkdir, mkdtemp } = fs.promises ? fs.promises : require('fs/promises');
+
 /**
  * Create a temporary folder.
  * @param prefix The prefix of the folder name.
  * @returns string
  */
 export async function createTempFolder(prefix: string): Promise<string> {
-  return await mkdtemp(path.join(os.tmpdir(), prefix));
+  return await mkdtemp(path.join(os.tmpdir(), 'verdaccio-' + prefix + '-'));
 }
 
 /**

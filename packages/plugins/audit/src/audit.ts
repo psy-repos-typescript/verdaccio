@@ -1,28 +1,35 @@
-import { json as jsonParser } from 'body-parser';
-import express, { Request, Response } from 'express';
+import express, { Express, Request, Response } from 'express';
 import https from 'https';
 import createHttpsProxyAgent from 'https-proxy-agent';
 import fetch from 'node-fetch';
 
-import { IBasicAuth, IPluginMiddleware, Logger, PluginOptions } from '@verdaccio/types';
+import type { Auth } from '@verdaccio/auth';
+import { pluginUtils } from '@verdaccio/core';
+import { Logger } from '@verdaccio/types';
 
 import { ConfigAudit } from './types';
 
 // FUTURE: we should be able to overwrite this
 export const REGISTRY_DOMAIN = 'https://registry.npmjs.org';
 
-export default class ProxyAudit implements IPluginMiddleware<{}, {}> {
+export default class ProxyAudit
+  extends pluginUtils.Plugin<ConfigAudit>
+  implements pluginUtils.ExpressMiddleware<ConfigAudit, {}, Auth>
+{
   public enabled: boolean;
   public logger: Logger;
   public strict_ssl: boolean;
+  public timeout: number;
 
-  public constructor(config: ConfigAudit, options: PluginOptions) {
+  public constructor(config: ConfigAudit, options: pluginUtils.PluginOptions) {
+    super(config, options);
     this.enabled = config.enabled || false;
     this.strict_ssl = config.strict_ssl !== undefined ? config.strict_ssl : true;
+    this.timeout = config.timeout ?? 1000 * 60 * 1;
     this.logger = options.logger;
   }
 
-  public register_middlewares(app: any, auth: IBasicAuth<ConfigAudit>): void {
+  public register_middlewares(app: Express, auth: Auth): void {
     const fetchAudit = async (
       req: Request,
       res: Response & { report_error?: Function }
@@ -52,7 +59,17 @@ export default class ProxyAudit implements IPluginMiddleware<{}, {}> {
         const auditEndpoint = `${REGISTRY_DOMAIN}${req.baseUrl}${req.route.path}`;
         this.logger.debug('fetching audit from ' + auditEndpoint);
 
-        const response = await fetch(auditEndpoint, requestOptions);
+        const controller = new AbortController();
+
+        setTimeout(
+          () => controller.abort(`Fetch ${auditEndpoint} timeout ${this.timeout}ms`),
+          this.timeout
+        );
+
+        const response = await fetch(auditEndpoint, {
+          ...requestOptions,
+          signal: controller.signal,
+        });
 
         if (response.ok) {
           res.status(response.status).send(await response.json());
@@ -78,10 +95,10 @@ export default class ProxyAudit implements IPluginMiddleware<{}, {}> {
     const router = express.Router();
     /* eslint new-cap:off */
 
-    router.post('/audits', jsonParser({ limit: '10mb' }), handleAudit);
-    router.post('/audits/quick', jsonParser({ limit: '10mb' }), handleAudit);
+    router.post('/audits', express.json({ limit: '10mb' }), handleAudit);
+    router.post('/audits/quick', express.json({ limit: '10mb' }), handleAudit);
 
-    router.post('/advisories/bulk', jsonParser({ limit: '10mb' }), handleAudit);
+    router.post('/advisories/bulk', express.json({ limit: '10mb' }), handleAudit);
 
     app.use('/-/npm/v1/security', router);
   }

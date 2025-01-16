@@ -1,42 +1,13 @@
 import nock from 'nock';
 import { basename } from 'path';
 import supertest from 'supertest';
+import { describe, expect, test } from 'vitest';
 
 import { HTTP_STATUS } from '@verdaccio/core';
 import { API_ERROR, API_MESSAGE, HEADERS, HEADER_TYPE } from '@verdaccio/core';
 import { generatePackageMetadata, generateRemotePackageMetadata } from '@verdaccio/test-helper';
 
-import { $RequestExtend, $ResponseExtend } from '../../types/custom';
 import { getPackage, initializeServer, publishVersion } from './_helper';
-
-const mockApiJWTmiddleware = jest.fn(
-  () =>
-    (req: $RequestExtend, res: $ResponseExtend, _next): void => {
-      req.remote_user = { name: 'foo', groups: [], real_groups: [] };
-      _next();
-    }
-);
-
-jest.mock('@verdaccio/auth', () => ({
-  Auth: class {
-    apiJWTmiddleware() {
-      return mockApiJWTmiddleware();
-    }
-    init() {
-      return Promise.resolve();
-    }
-    allow_access(_d, f_, cb) {
-      cb(null, true);
-    }
-    allow_publish(_d, f_, cb) {
-      cb(null, true);
-    }
-
-    allow_unpublish(_d, f_, cb) {
-      cb(null, true);
-    }
-  },
-}));
 
 describe('publish', () => {
   describe('handle errors', () => {
@@ -80,13 +51,29 @@ describe('publish', () => {
           });
       });
     });
+
+    test.each([['foo', '@scope/foo']])(
+      'should fails on publish a duplicated package',
+      async (pkgName) => {
+        const app = await initializeServer('publish.yaml');
+        await publishVersion(app, pkgName, '1.0.0');
+        new Promise((resolve) => {
+          publishVersion(app, pkgName, '1.0.0')
+            .expect(HTTP_STATUS.CONFLICT)
+            .then((response) => {
+              expect(response.body.error).toEqual(API_ERROR.PACKAGE_EXIST);
+              resolve(response);
+            });
+        });
+      }
+    );
   });
 
   describe('publish a package', () => {
     describe('no proxies setup', () => {
       test.each([['foo', '@scope/foo']])('should publish a package', async (pkgName) => {
         const app = await initializeServer('publish.yaml');
-        return new Promise((resolve) => {
+        new Promise((resolve) => {
           publishVersion(app, pkgName, '1.0.0')
             .expect(HTTP_STATUS.CREATED)
             .then((response) => {
@@ -99,7 +86,7 @@ describe('publish', () => {
       test.each([['foo', '@scope/foo']])('should publish a new package', async (pkgName) => {
         const pkgMetadata = generatePackageMetadata(pkgName, '1.0.0');
         const app = await initializeServer('publish.yaml');
-        return new Promise((resolve) => {
+        new Promise((resolve) => {
           supertest(app)
             .put(`/${encodeURIComponent(pkgName)}`)
             .set(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON)
@@ -141,6 +128,7 @@ describe('publish', () => {
         });
       });
     });
+
     describe('proxies setup', () => {
       test.each([['foo', '@scope%2Ffoo']])(
         'should publish a a patch package that already exist on a remote',
@@ -160,33 +148,17 @@ describe('publish', () => {
             decodeURIComponent(pkgName),
             '1.0.1-patch'
           ).expect(HTTP_STATUS.CREATED);
-          expect(response.body.ok).toEqual(API_MESSAGE.PKG_CREATED);
+          expect(response.body.ok).toEqual(API_MESSAGE.PKG_CHANGED);
           const response2 = await publishVersion(
             app,
             decodeURIComponent(pkgName),
             '1.0.2-patch'
           ).expect(HTTP_STATUS.CREATED);
-          expect(response2.body.ok).toEqual(API_MESSAGE.PKG_CREATED);
+          expect(response2.body.ok).toEqual(API_MESSAGE.PKG_CHANGED);
         }
       );
     });
   });
-
-  test.each([['foo', '@scope/foo']])(
-    'should fails on publish a duplicated package',
-    async (pkgName) => {
-      const app = await initializeServer('publish.yaml');
-      await publishVersion(app, pkgName, '1.0.0');
-      return new Promise((resolve) => {
-        publishVersion(app, pkgName, '1.0.0')
-          .expect(HTTP_STATUS.CONFLICT)
-          .then((response) => {
-            expect(response.body.error).toEqual(API_ERROR.PACKAGE_EXIST);
-            resolve(response);
-          });
-      });
-    }
-  );
 
   describe('unpublish a package', () => {
     test.each([['foo', '@scope/foo']])('should unpublish entirely a package', async (pkgName) => {
@@ -257,6 +229,4 @@ describe('publish', () => {
       }
     );
   });
-
-  describe('star a package', () => {});
 });

@@ -1,6 +1,8 @@
 import path from 'path';
+import { describe, expect, test } from 'vitest';
 
 import { Config, parseConfigFile } from '@verdaccio/config';
+import { pluginUtils } from '@verdaccio/core';
 import { logger, setup } from '@verdaccio/logger';
 
 import { asyncLoadPlugin } from '../src/plugin-async-loader';
@@ -13,10 +15,13 @@ function getConfig(file: string) {
 const authSanitize = function (plugin) {
   return plugin.authenticate || plugin.allow_access || plugin.allow_publish;
 };
+const storeSanitize = function (plugin) {
+  return typeof plugin.getPackageStorage !== 'undefined';
+};
 
 const pluginsPartialsFolder = path.join(__dirname, './partials/test-plugin-storage');
 
-setup();
+setup({});
 
 describe('plugin loader', () => {
   describe('file plugins', () => {
@@ -29,13 +34,17 @@ describe('plugin loader', () => {
         expect(plugins).toHaveLength(1);
       });
 
+      test('testing storage valid plugin loader', async () => {
+        const config = getConfig('valid-plugin-store.yaml');
+        config.plugins = pluginsPartialsFolder;
+        const plugins = await asyncLoadPlugin(config.store, { config, logger }, storeSanitize);
+
+        expect(plugins).toHaveLength(1);
+      });
+
       test('should handle does not exist plugin folder', async () => {
         const config = getConfig('plugins-folder-fake.yaml');
-        const plugins = await asyncLoadPlugin(
-          config.auth,
-          { logger: logger, config: config },
-          authSanitize
-        );
+        const plugins = await asyncLoadPlugin(config.auth, { config, logger }, authSanitize);
 
         expect(plugins).toHaveLength(0);
       });
@@ -43,7 +52,12 @@ describe('plugin loader', () => {
       test('testing load auth npm package invalid method check', async () => {
         const config = getConfig('valid-plugin.yaml');
         config.plugins = pluginsPartialsFolder;
-        const plugins = await asyncLoadPlugin(config.auth, { config, logger }, (p) => p.anyMethod);
+        const plugins = await asyncLoadPlugin<pluginUtils.Auth<unknown>>(
+          config.auth,
+          { config, logger },
+          // @ts-expect-error
+          (p) => typeof p.somethingFake !== 'undefined'
+        );
 
         expect(plugins).toHaveLength(0);
       });
@@ -52,11 +66,7 @@ describe('plugin loader', () => {
         const config = getConfig('plugins-folder-fake.yaml');
         // force file instead a folder.
         config.plugins = path.join(__dirname, 'just-a-file.js');
-        const plugins = await asyncLoadPlugin(
-          config.auth,
-          { logger: logger, config: config },
-          authSanitize
-        );
+        const plugins = await asyncLoadPlugin(config.auth, { config, logger }, authSanitize);
 
         expect(plugins).toHaveLength(0);
       });
@@ -65,11 +75,7 @@ describe('plugin loader', () => {
       test('should resolve plugin based on relative path', async () => {
         const config = getConfig('relative-plugins.yaml');
         // force file instead a folder.
-        const plugins = await asyncLoadPlugin(
-          config.auth,
-          { logger: logger, config: config },
-          authSanitize
-        );
+        const plugins = await asyncLoadPlugin(config.auth, { config, logger }, authSanitize);
 
         expect(plugins).toHaveLength(1);
       });
@@ -81,11 +87,7 @@ describe('plugin loader', () => {
         // @ts-expect-error
         config.config_path = undefined;
         // force file instead a folder.
-        const plugins = await asyncLoadPlugin(
-          config.auth,
-          { logger: logger, config: config },
-          authSanitize
-        );
+        const plugins = await asyncLoadPlugin(config.auth, { config, logger }, authSanitize);
 
         expect(plugins).toHaveLength(0);
       });
@@ -96,11 +98,7 @@ describe('plugin loader', () => {
         // @ts-expect-error
         config.configPath = undefined;
         // force file instead a folder.
-        const plugins = await asyncLoadPlugin(
-          config.auth,
-          { logger: logger, config: config },
-          authSanitize
-        );
+        const plugins = await asyncLoadPlugin(config.auth, { config, logger }, authSanitize);
 
         expect(plugins).toHaveLength(0);
       });
@@ -117,14 +115,23 @@ describe('plugin loader', () => {
 
     test('should handle not found installed package', async () => {
       const config = getConfig('npm-plugin-not-found.yaml');
-      const plugins = await asyncLoadPlugin(config.auth, { config, logger }, (p) => p.anyMethod);
+      const plugins = await asyncLoadPlugin<pluginUtils.Auth<unknown>>(
+        config.auth,
+        { config, logger },
+        (p) => typeof p.authenticate !== 'undefined'
+      );
 
       expect(plugins).toHaveLength(0);
     });
 
     test('testing load auth npm package invalid method check', async () => {
       const config = getConfig('npm-plugin-auth.yaml');
-      const plugins = await asyncLoadPlugin(config.auth, { config, logger }, (p) => p.anyMethod);
+      const plugins = await asyncLoadPlugin<pluginUtils.Auth<unknown>>(
+        config.auth,
+        { config, logger },
+        // @ts-expect-error
+        (p) => typeof p.somethingFake !== 'undefined'
+      );
 
       expect(plugins).toHaveLength(0);
     });

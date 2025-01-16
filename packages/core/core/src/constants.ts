@@ -2,10 +2,11 @@ import httpCodes from 'http-status-codes';
 
 export const DEFAULT_PASSWORD_VALIDATION = /.{3}$/;
 export const TIME_EXPIRATION_24H = '24h';
-export const TIME_EXPIRATION_7D = '7d';
+export const TIME_EXPIRATION_1H = '1h';
 export const DIST_TAGS = 'dist-tags';
 export const LATEST = 'latest';
 export const USERS = 'users';
+export const MAINTAINERS = 'maintainers';
 export const DEFAULT_USER = 'Anonymous';
 
 export const HEADER_TYPE = {
@@ -13,6 +14,7 @@ export const HEADER_TYPE = {
   CONTENT_TYPE: 'content-type',
   CONTENT_LENGTH: 'content-length',
   ACCEPT_ENCODING: 'accept-encoding',
+  AUTHORIZATION: 'authorization',
 };
 
 export const CHARACTER_ENCODING = {
@@ -35,6 +37,7 @@ export const HEADERS = {
   TEXT_HTML_UTF8: 'text/html; charset=utf-8',
   TEXT_HTML: 'text/html',
   AUTHORIZATION: 'authorization',
+  CACHE_CONTROL: 'Cache-Control',
   // only set with proxy that setup HTTPS
   // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-Proto
   FORWARDED_PROTO: 'X-Forwarded-Proto',
@@ -43,6 +46,10 @@ export const HEADERS = {
   CSP: 'Content-Security-Policy',
   CTO: 'X-Content-Type-Options',
   XSS: 'X-XSS-Protection',
+  CLIENT: 'X-Client',
+  POWERED_BY: 'X-Powered-By',
+  RATELIMIT_LIMIT: 'X-RateLimit-Limit',
+  RATELIMIT_REMAINING: 'X-RateLimit-Remaining',
   NONE_MATCH: 'If-None-Match',
   ETAG: 'ETag',
   JSON_CHARSET: 'application/json; charset=utf-8',
@@ -51,6 +58,7 @@ export const HEADERS = {
   TEXT_CHARSET: 'text/plain; charset=utf-8',
   WWW_AUTH: 'WWW-Authenticate',
   GZIP: 'gzip',
+  HOST: 'host',
 };
 
 export const HTTP_STATUS = {
@@ -69,6 +77,7 @@ export const HTTP_STATUS = {
   INTERNAL_ERROR: httpCodes.INTERNAL_SERVER_ERROR,
   SERVICE_UNAVAILABLE: httpCodes.SERVICE_UNAVAILABLE,
   LOOP_DETECTED: 508,
+  CANNOT_HANDLE: 590,
 };
 
 export const ERROR_CODE = {
@@ -107,4 +116,19 @@ export const ROLES = {
 export const PACKAGE_ACCESS = {
   SCOPE: '@*/*',
   ALL: '**',
+};
+
+export enum HtpasswdHashAlgorithm {
+  md5 = 'md5',
+  sha1 = 'sha1',
+  crypt = 'crypt',
+  bcrypt = 'bcrypt',
+}
+
+export const PLUGIN_CATEGORY = {
+  AUTHENTICATION: 'authentication',
+  MIDDLEWARE: 'middleware',
+  STORAGE: 'storage',
+  FILTER: 'filter',
+  THEME: 'theme',
 };

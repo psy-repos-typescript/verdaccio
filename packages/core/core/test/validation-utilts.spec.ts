@@ -1,15 +1,21 @@
+import { describe, expect, test } from 'vitest';
+
 import { DEFAULT_PASSWORD_VALIDATION, DIST_TAGS } from '../src/constants';
-import { validatePublishSingleVersion } from '../src/schemes/publish-manifest';
 import {
   isObject,
   normalizeMetadata,
   validateName,
   validatePackage,
   validatePassword,
+  validateUserName,
 } from '../src/validation-utils';
 
 describe('validatePackage', () => {
   test('should validate package names', () => {
+    expect(validatePackage('-')).toBeTruthy();
+    expect(validatePackage('--')).toBeTruthy();
+    expect(validatePackage('a')).toBeTruthy();
+    expect(validatePackage('a-')).toBeTruthy();
     expect(validatePackage('package-name')).toBeTruthy();
     expect(validatePackage('@scope/package-name')).toBeTruthy();
   });
@@ -21,6 +27,7 @@ describe('validatePackage', () => {
     expect(validatePackage('node_modules')).toBeFalsy();
     expect(validatePackage('__proto__')).toBeFalsy();
     expect(validatePackage('favicon.ico')).toBeFalsy();
+    expect(validatePackage('%')).toBeFalsy();
   });
 });
 
@@ -31,6 +38,7 @@ describe('isObject', () => {
     expect(isObject(['foo'])).toBeFalsy();
     expect(isObject(null)).toBeFalsy();
     expect(isObject(undefined)).toBeFalsy();
+    expect(isObject(true)).toBeFalsy();
   });
 });
 
@@ -55,10 +63,9 @@ describe('normalizeMetadata', () => {
 
   test('should fails the assertions is name does not match', () => {
     expect(function () {
-      // @ts-ignore
+      // @ts-expect-error
       normalizeMetadata({}, 'no-name');
-      // @ts-ignore
-    }).toThrow(expect.hasAssertions());
+    }).toThrowError();
   });
 });
 
@@ -74,6 +81,7 @@ describe('validateName', () => {
   test('good ones', () => {
     expect(validateName('verdaccio')).toBeTruthy();
     expect(validateName('some.weird.package-zzz')).toBeTruthy();
+    expect(validateName('--0.0.1.tgz')).toBeTruthy();
     expect(validateName('old-package@0.1.2.tgz')).toBeTruthy();
     // fix https://github.com/verdaccio/verdaccio/issues/1400
     expect(validateName('-build-infra')).toBeTruthy();
@@ -106,65 +114,6 @@ describe('validateName', () => {
     expect(validateName('pk%20g')).toBeFalsy();
     expect(validateName('pk+g')).toBeFalsy();
     expect(validateName('pk:g')).toBeFalsy();
-  });
-});
-
-describe('validatePublishSingleVersion', () => {
-  test('should be valid', () => {
-    expect(
-      validatePublishSingleVersion({
-        name: 'foo-pkg',
-        _attachments: { '2': {} },
-        versions: { '1': {} },
-      })
-    ).toBeTruthy();
-  });
-
-  test('should be invalid if name is missing', () => {
-    expect(
-      validatePublishSingleVersion({
-        _attachments: { '2': {} },
-        versions: { '1': {} },
-      })
-    ).toBeFalsy();
-  });
-
-  test('should be invalid if _attachments is missing', () => {
-    expect(
-      validatePublishSingleVersion({
-        name: 'foo-pkg',
-        versions: { '1': {} },
-      })
-    ).toBeFalsy();
-  });
-
-  test('should be invalid if versions is missing', () => {
-    expect(
-      validatePublishSingleVersion({
-        name: 'foo-pkg',
-        _attachments: { '1': {} },
-      })
-    ).toBeFalsy();
-  });
-
-  test('should be invalid if versions is more than 1', () => {
-    expect(
-      validatePublishSingleVersion({
-        name: 'foo-pkg',
-        versions: { '1': {}, '2': {} },
-        _attachments: { '1': {} },
-      })
-    ).toBeFalsy();
-  });
-
-  test('should be invalid if _attachments is more than 1', () => {
-    expect(
-      validatePublishSingleVersion({
-        name: 'foo-pkg',
-        _attachments: { '1': {}, '2': {} },
-        versions: { '1': {} },
-      })
-    ).toBeFalsy();
   });
 });
 
@@ -215,5 +164,19 @@ describe('validatePassword', () => {
 
   test('should validate password according the length and default config', () => {
     expect(validatePassword('1235678910')).toBeTruthy();
+  });
+});
+
+describe('validateUserName', () => {
+  test('should validate username according to expected name', () => {
+    expect(validateUserName('org.couchdb.user:test', 'test')).toBeTruthy();
+  });
+
+  test('should fail to validate username if different from expected name', () => {
+    expect(validateUserName('org.couchdb.user:foouser', 'test')).toBeFalsy();
+  });
+
+  test('should fail to validate username if not given', () => {
+    expect(validateUserName(undefined, 'test')).toBeFalsy();
   });
 });

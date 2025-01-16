@@ -1,20 +1,24 @@
 import buildDebug from 'debug';
-import { lstat } from 'fs/promises';
+import fs from 'fs';
 import { dirname, isAbsolute, join, resolve } from 'path';
 
-import { logger } from '@verdaccio/logger';
-import { Config, IPlugin, Logger } from '@verdaccio/types';
+import { pluginUtils } from '@verdaccio/core';
 
-import { isES6, isValid, tryLoad } from './utils';
+import { PluginType, isES6, isValid, tryLoad } from './utils';
 
 const debug = buildDebug('verdaccio:plugin:loader:async');
 
-async function isDirectory(pathFolder) {
+const { lstat } = fs.promises ? fs.promises : require('fs/promises');
+
+async function isDirectory(pathFolder: string) {
   const stat = await lstat(pathFolder);
   return stat.isDirectory();
 }
 
-export type Params = { config: Config; logger: Logger };
+// type Plugins<T> =
+//   | pluginUtils.Auth<T>
+//   | pluginUtils.Storage<T>
+//   | pluginUtils.ExpressMiddleware<T, unknown, unknown>;
 
 /**
  * The plugin loader find recursively plugins, if one plugin fails is ignored and report the error to the logger.
@@ -33,22 +37,25 @@ export type Params = { config: Config; logger: Logger };
  * The `params` is an object that contains the global configuration and the logger.
  *
  * @param {*} pluginConfigs the custom plugin section
- * @param {*} params a set of params to initialize the plugin
+ * @param {*} pluginOptions a set of options to initialize the plugin
  * @param {*} sanityCheck callback that check the shape that should fulfill the plugin
  * @param {*} prefix by default is verdaccio but can be override with config.server.pluginPrefix
+ * @param {*} pluginCategory the category of the plugin, eg: auth, storage, middleware
  * @return {Array} list of plugins
  */
-export async function asyncLoadPlugin<T extends IPlugin<T>>(
+export async function asyncLoadPlugin<T extends pluginUtils.Plugin<T>>(
   pluginConfigs: any = {},
-  params: Params,
-  sanityCheck: any,
-  prefix: string = 'verdaccio'
-): Promise<any> {
+  pluginOptions: pluginUtils.PluginOptions,
+  sanityCheck: (plugin: PluginType<T>) => boolean,
+  prefix: string = 'verdaccio',
+  pluginCategory: string = ''
+): Promise<PluginType<T>[]> {
+  const logger = pluginOptions?.logger;
   const pluginsIds = Object.keys(pluginConfigs);
-  const { config } = params;
-  let plugins: any[] = [];
+  const { config } = pluginOptions;
+  let plugins: PluginType<T>[] = [];
   for (let pluginId of pluginsIds) {
-    debug('plugin %s', pluginId);
+    debug('looking for plugin %o', pluginId);
     if (typeof config.plugins === 'string') {
       let pluginsPath = config.plugins;
       debug('plugin path %s', pluginsPath);
@@ -65,16 +72,17 @@ export async function asyncLoadPlugin<T extends IPlugin<T>>(
         }
         pluginsPath = resolve(join(dirname(config.configPath), pluginsPath));
       }
-
       logger.debug({ path: pluginsPath }, 'plugins folder defined, loading plugins from @{path} ');
-      // throws if is nto a directory
+      // throws if is not a directory
       try {
         await isDirectory(pluginsPath);
         const pluginDir = pluginsPath;
         const externalFilePlugin = resolve(pluginDir, `${prefix}-${pluginId}`);
-        let plugin = tryLoad(externalFilePlugin);
+        let plugin = tryLoad<T>(externalFilePlugin, (a: any, b: any) => {
+          logger.error(a, b);
+        });
         if (plugin && isValid(plugin)) {
-          plugin = executePlugin(plugin, pluginConfigs[pluginId], params);
+          plugin = executePlugin(plugin, pluginConfigs[pluginId], pluginOptions);
           if (!sanityCheck(plugin)) {
             logger.error(
               { content: externalFilePlugin },
@@ -83,6 +91,10 @@ export async function asyncLoadPlugin<T extends IPlugin<T>>(
             continue;
           }
           plugins.push(plugin);
+          logger.info(
+            { prefix, pluginId, pluginCategory },
+            'plugin @{prefix}-@{pluginId} successfully loaded (@{pluginCategory})'
+          );
           continue;
         }
       } catch (err: any) {
@@ -95,17 +107,23 @@ export async function asyncLoadPlugin<T extends IPlugin<T>>(
 
     if (typeof pluginId === 'string') {
       const isScoped: boolean = pluginId.startsWith('@') && pluginId.includes('/');
-      debug('is scoped plugin %s', isScoped);
+      debug('is scoped plugin: %s', isScoped);
       const pluginName = isScoped ? pluginId : `${prefix}-${pluginId}`;
-      debug('plugin pkg name %s', pluginName);
-      let plugin = tryLoad(pluginName);
+      debug('plugin package name %s', pluginName);
+      let plugin = tryLoad<T>(pluginName, (a: any, b: any) => {
+        logger.error(a, b);
+      });
       if (plugin && isValid(plugin)) {
-        plugin = executePlugin(plugin, pluginConfigs[pluginId], params);
+        plugin = executePlugin(plugin, pluginConfigs[pluginId], pluginOptions);
         if (!sanityCheck(plugin)) {
           logger.error({ content: pluginName }, "@{content} doesn't look like a valid plugin");
           continue;
         }
         plugins.push(plugin);
+        logger.info(
+          { prefix, pluginId, pluginCategory },
+          'plugin @{prefix}-@{pluginId} successfully loaded (@{pluginCategory})'
+        );
         continue;
       } else {
         logger.error(
@@ -116,17 +134,23 @@ export async function asyncLoadPlugin<T extends IPlugin<T>>(
       }
     }
   }
-  debug('plugin found %s', plugins.length);
+  debug('%s plugins found: %s', pluginCategory, plugins.length);
   return plugins;
 }
 
-export function executePlugin(plugin, pluginConfig, params: Params) {
+export function executePlugin<T>(
+  plugin: PluginType<T>,
+  pluginConfig: unknown,
+  pluginOptions: pluginUtils.PluginOptions
+): PluginType<T> {
   if (isES6(plugin)) {
     debug('plugin is ES6');
+    // @ts-expect-error no relevant for the code
     // eslint-disable-next-line new-cap
-    return new plugin.default(pluginConfig, params);
+    return new plugin.default(pluginConfig, pluginOptions) as Plugin;
   } else {
     debug('plugin is commonJS');
-    return plugin(pluginConfig, params);
+    // @ts-expect-error improve this type
+    return plugin(pluginConfig, pluginOptions) as PluginType<T>;
   }
 }

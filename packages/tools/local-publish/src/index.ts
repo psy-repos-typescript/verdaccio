@@ -12,7 +12,7 @@ fileUtils
       logs: { level: 'info', type: 'stdout', format: 'pretty' },
       uplinks: {},
       packages: {},
-      self_path: folderPath,
+      configPath: folderPath,
     })
       .addUplink('npmjs', { url: 'https://registry.npmjs.org' })
       .addPackageAccess('@verdaccio/*', {
@@ -46,7 +46,7 @@ fileUtils
   })
   .then((app: any) => {
     app.listen(4873, () => {
-      console.log('running verdaccio@5 server');
+      console.log('running verdaccio server');
     });
   })
   .catch(console.error);

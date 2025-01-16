@@ -1,4 +1,5 @@
 import supertest from 'supertest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { API_ERROR, HEADERS, HEADER_TYPE, HTTP_STATUS, TOKEN_BEARER } from '@verdaccio/core';
 import { buildToken } from '@verdaccio/utils';
@@ -7,7 +8,7 @@ import { createUser, getPackage, initializeServer } from './_helper';
 
 const FORBIDDEN_VUE = 'authorization required to access package vue';
 
-jest.setTimeout(20000);
+vi.setConfig({ testTimeout: 20000 });
 
 describe('token', () => {
   describe('basics', () => {
@@ -148,6 +149,25 @@ describe('token', () => {
           .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON_CHARSET)
           .expect(HTTP_STATUS.OK);
         expect(response2.body.ok).toBe(`you are authenticated as '${credentials.name}'`);
+        expect(response2.body.name).toBe(credentials.name);
+      }
+    );
+
+    test.each([['user.yaml'], ['user.jwt.yaml']])(
+      'should return name of requested user',
+      async (conf) => {
+        const app = await initializeServer(conf);
+        const username = 'yeti';
+        const credentials = { name: 'jota', password: 'secretPass' };
+        const response = await createUser(app, credentials.name, credentials.password);
+        expect(response.body.ok).toMatch(`user '${credentials.name}' created`);
+        const response3 = await supertest(app)
+          .get(`/-/user/org.couchdb.user:${username}`)
+          .set(HEADERS.AUTHORIZATION, buildToken(TOKEN_BEARER, response.body.token))
+          .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON_CHARSET)
+          .expect(HTTP_STATUS.OK);
+        expect(response3.body.ok).toBe(`you are authenticated as '${credentials.name}'`);
+        expect(response3.body.name).toBe(username);
       }
     );
 
@@ -165,5 +185,38 @@ describe('token', () => {
         .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON_CHARSET)
         .expect(HTTP_STATUS.OK);
     });
+
+    test.each([['user.yaml'], ['user.jwt.yaml']])(
+      'should return "false" if user is not logged in',
+      async (conf) => {
+        const app = await initializeServer(conf);
+        const credentials = { name: 'jota', password: '' };
+        const response = await supertest(app)
+          .get(`/-/user/org.couchdb.user:${credentials.name}`)
+          .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON_CHARSET)
+          .expect(HTTP_STATUS.OK);
+        expect(response.body.ok).toBe(false);
+      }
+    );
+
+    test.each([['user.yaml'], ['user.jwt.yaml']])(
+      'should fail if URL does not match user in request body',
+      async (conf) => {
+        const app = await initializeServer(conf);
+        const credentials = { name: 'jota', password: 'secretPass' };
+        const response = await createUser(app, credentials.name, credentials.password);
+        expect(response.body.ok).toMatch(`user '${credentials.name}' created`);
+        const response2 = await supertest(app)
+          .put('/-/user/org.couchdb.user:yeti') // different user
+          .set(HEADERS.AUTHORIZATION, buildToken(TOKEN_BEARER, response.body.token))
+          .send({
+            name: credentials.name,
+            password: credentials.password,
+          })
+          .expect(HEADER_TYPE.CONTENT_TYPE, HEADERS.JSON_CHARSET)
+          .expect(HTTP_STATUS.BAD_REQUEST);
+        expect(response2.body.error).toBe(API_ERROR.USERNAME_MISMATCH);
+      }
+    );
   });
 });

@@ -1,37 +1,37 @@
 /* eslint-disable jest/no-mocks-import */
 import path from 'path';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { fileUtils } from '@verdaccio/core';
+import { fileUtils, pluginUtils } from '@verdaccio/core';
 import { logger, setup } from '@verdaccio/logger';
-import { IPluginStorage, PluginOptions } from '@verdaccio/types';
 
 import LocalDatabase, { ERROR_DB_LOCKED } from '../src/local-database';
 
-const mockWrite = jest.fn(() => Promise.resolve());
-const mockmkdir = jest.fn(() => Promise.resolve());
-const mockRead = jest.fn(() => Promise.resolve());
+const mockWrite = vi.fn(() => Promise.resolve());
+const mockmkdir = vi.fn(() => Promise.resolve());
+const mockRead = vi.fn(() => Promise.resolve());
 
-jest.mock('../src/fs', () => ({
+vi.mock('../src/fs', () => ({
   mkdirPromise: () => mockRead(),
   readFilePromise: () => mockmkdir(),
   writeFilePromise: () => mockWrite(),
 }));
 
-setup();
+setup({});
 
-// @ts-expect-error
-const optionsPlugin: PluginOptions = {
+const optionsPlugin: pluginUtils.PluginOptions = {
   logger,
+  // @ts-expect-error
+  config: null,
 };
 
-let locaDatabase: IPluginStorage<{}>;
+let locaDatabase: pluginUtils.Storage<{}>;
 
 describe('Local Database', () => {
   let tmpFolder;
   beforeEach(async () => {
-    tmpFolder = await fileUtils.createTempFolder('local-storage-plugin-');
+    tmpFolder = await fileUtils.createTempFolder('local-storage-plugin');
     const tempFolder = path.join(tmpFolder, 'verdaccio-test.yaml');
-    // @ts-expect-error
     locaDatabase = new LocalDatabase(
       // @ts-expect-error
       {
@@ -46,8 +46,8 @@ describe('Local Database', () => {
   });
 
   afterEach(() => {
-    jest.resetAllMocks();
-    jest.clearAllMocks();
+    vi.resetAllMocks();
+    vi.clearAllMocks();
   });
 
   test('should create an instance', () => {
@@ -58,7 +58,7 @@ describe('Local Database', () => {
     mockmkdir.mockImplementation(() => {
       throw Error();
     });
-    const tmpFolder = await fileUtils.createTempFolder('local-storage-plugin-');
+    const tmpFolder = await fileUtils.createTempFolder('local-storage-plugin');
     const tempFolder = path.join(tmpFolder, 'verdaccio-test.yaml');
     const instance = new LocalDatabase(
       // @ts-expect-error

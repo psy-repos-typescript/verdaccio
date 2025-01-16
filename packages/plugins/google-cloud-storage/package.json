@@ -27,8 +27,7 @@
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "engines": {
-    "node": ">=14",
-    "npm": ">=6"
+    "node": ">=18"
   },
   "dependencies": {
     "@google-cloud/datastore": "6.5.0",
@@ -49,7 +48,7 @@
     "build:types": "tsc --emitDeclarationOnly -p tsconfig.build.json",
     "build:js": "babel src/ --out-dir build/ --copy-files --extensions \".ts,.tsx\" --source-maps",
     "build": "pnpm run build:js && pnpm run build:types",
-    "test": "jest"
+    "test": "vitest run"
   },
   "snyk": true,
   "funding": {

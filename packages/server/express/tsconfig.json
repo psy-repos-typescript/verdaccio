@@ -17,19 +17,13 @@
       "path": "../../config"
     },
     {
-      "path": "../../core/commons-api"
-    },
-    {
       "path": "../../loaders"
     },
     {
-      "path": "../../logger"
+      "path": "../../logger/logger"
     },
     {
       "path": "../../middleware"
-    },
-    {
-      "path": "../../mock"
     },
     {
       "path": "../../plugins/audit"

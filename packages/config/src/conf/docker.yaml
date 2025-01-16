@@ -21,6 +21,12 @@ plugins: /verdaccio/plugins
 # https://verdaccio.org/docs/webui
 web:
   title: Verdaccio
+  # custom colors for header background and font
+  # primaryColor: "#4b5e40"
+  # custom logos and favicon
+  # logo: ./path/to/logo.png
+  # logoDark: ./path/to/logoDark.png
+  # favicon: ./path/to/favicon.ico
   # Comment out to disable gravatar support
   # gravatar: false
   # By default packages are ordered ascendant (asc|desc)
@@ -38,6 +44,7 @@ web:
   # showSearch: true
   # showRaw: true
   # showDownloadTarball: true
+  # showUplinks: true
   #  HTML tags injected after manifest <scripts/>
   # scriptsBodyAfter:
   #    - '<script type="text/javascript" src="https://my.company.com/customJS.min.js"></script>'
@@ -86,7 +93,7 @@ packages:
     # and three keywords: "$all", "$anonymous", "$authenticated"
     access: $all
 
-    # Allow all known users to publish/publish packages
+    # Allow all known users to publish/unpublish packages
     # (anyone can register by default, remember?)
     publish: $authenticated
     unpublish: $authenticated
@@ -112,10 +119,14 @@ server:
   # A regex for the password validation /.{3}$/ (3 characters min)
   # An example to limit to 10 characters minimum
   # passwordValidationRegex: /.{10}$/
+  # Allow `req.ip` to resolve properly when Verdaccio is behind a proxy or load-balancer
+  # See: https://expressjs.com/en/guide/behind-proxies.html
+  # trustProxy: '127.0.0.1'
 
 # https://verdaccio.org/docs/configuration#offline-publish
 # publish:
 #   allow_offline: false
+#   check_owners: false
 
 # https://verdaccio.org/docs/configuration#url-prefix
 # url_prefix: /verdaccio/
@@ -182,6 +193,7 @@ server:
 middlewares:
   audit:
     enabled: true
+    # timeout: 10000
 
 # https://verdaccio.org/docs/logger
 # log settings

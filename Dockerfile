@@ -1,26 +1,26 @@
-FROM --platform=${BUILDPLATFORM:-linux/amd64} node:16-alpine as builder
+FROM --platform=${BUILDPLATFORM:-linux/amd64} node:22-alpine AS builder
 
 ENV NODE_ENV=development \
-    VERDACCIO_BUILD_REGISTRY=https://registry.verdaccio.org
+    VERDACCIO_BUILD_REGISTRY=https://registry.npmjs.org
 
 RUN apk --no-cache add openssl ca-certificates wget && \
     apk --no-cache add g++ gcc libgcc libstdc++ linux-headers make python3 && \
     wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
-    wget -q https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.25-r0/glibc-2.25-r0.apk && \
-    apk add glibc-2.25-r0.apk
+    wget -q https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.35-r0/glibc-2.35-r0.apk && \
+    apk add --force-overwrite glibc-2.35-r0.apk
 
 WORKDIR /opt/verdaccio-build
 COPY . .
-RUN npm -g i pnpm@6.32.15 && \
+RUN npm -g i pnpm@8.9.0 && \
     pnpm config set registry $VERDACCIO_BUILD_REGISTRY && \
-    pnpm recursive install --frozen-lockfile --ignore-scripts && \
+    pnpm install --frozen-lockfile --ignore-scripts && \
     rm -Rf test && \
-    pnpm run build && \
-    pnpm install -P
-# FIXME: need to remove devDependencies from the build
+    pnpm run build
+# FIXME: need to remove devDependencies from the build    
+# NODE_ENV=production pnpm install --frozen-lockfile --ignore-scripts
 # RUN pnpm install --prod --ignore-scripts
 
-FROM node:16-alpine
+FROM node:22-alpine
 LABEL maintainer="https://github.com/verdaccio/verdaccio"
 
 ENV VERDACCIO_APPDIR=/opt/verdaccio \

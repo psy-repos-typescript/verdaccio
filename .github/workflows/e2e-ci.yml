@@ -1,17 +1,11 @@
 name: E2E CLI
 
-on:
-  pull_request:
-    paths:
-      - .changeset/**
-      - .github/workflows/e2e-ci.yml
-      - 'packages/**'
-      - 'test/**'
-      - 'jest/**'
-      - 'package.json'
-      - 'pnpm-workspace.yaml'
+on: [pull_request]
 permissions:
   contents: read
+concurrency:
+  group: e2e-ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -24,90 +18,100 @@ jobs:
         env:
           NODE_ENV: production
     steps:
-    - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # tag=v3
-    - name: Use Node 16
-      uses: actions/setup-node@2fddd8803e2f5c9604345a0b591c3020ee971a93 # tag=v3
-      with:
-        node-version: 16
-    - name: Install pnpm
-      run: npm i pnpm@6.32.15 -g
-    - name: set store
-      run: |
-        mkdir ~/.pnpm-store
-        pnpm config set store-dir ~/.pnpm-store
-    - name: Install
-      run: pnpm recursive install --frozen-lockfile --reporter=silence --ignore-scripts --registry http://localhost:4873
-    - name: Cache .pnpm-store
-      uses: actions/cache@fd5de65bc895cf536527842281bea11763fefd77 # tag=v3
-      with:
-        path: ~/.pnpm-store
-        key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-        restore-keys: |
-          pnpm-
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install dependencies with a custom registry
+        uses: ./.github/actions/install-app
   build:
     needs: [prepare]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # tag=v3
-      - name: Use Node 16
-        uses: actions/setup-node@2fddd8803e2f5c9604345a0b591c3020ee971a93 # tag=v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build application with Node ${{ matrix.node_version }}
+        uses: ./.github/actions/build-app
         with:
-          node-version: 16
-      - name: Install pnpm
-        run: npm i pnpm@6.32.15 -g
-      - uses: actions/cache@fd5de65bc895cf536527842281bea11763fefd77 # tag=v3
-        with:
-          path: ~/.pnpm-store
-          key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-      - name: Install
-        run: pnpm recursive install --offline --frozen-lockfile --reporter=silence --ignore-scripts --registry http://localhost:4873
-      - name: build
-        run: pnpm build
+          node-version: ${{ matrix.node_version }}
       - name: Cache packages
-        uses: actions/cache@fd5de65bc895cf536527842281bea11763fefd77 # tag=v3
-        id: cache-packages
+        uses: ./.github/actions/cache-packages
+  e2e-cli-npm:
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg:
+          [
+            npm6,
+            npm7,
+            npm8,
+            npm9,
+            npm10
+          ]
+        node: [18, 23]
+    name: ${{ matrix.pkg }}/ ubuntu-latest / ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install dependencies with a custom registry version ${{ inputs.node-version }}
+        uses: ./.github/actions/install-app-node
         with:
-          path: ./packages/
-          key: pkg-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            packages-
-      - name: Cache test
-        uses: actions/cache@fd5de65bc895cf536527842281bea11763fefd77 # tag=v3
-        id: cache-test
-        with:
-          path: ./test/
-          key: test-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            test-
+          node-version: ${{ inputs.node_version }}
+          reporter: 'default'
+          loglevel: 'debug'
+      - name: Restore cache pnpm store
+        uses: ./.github/actions/cache-packages
+      - name: Test CLI
+        run: NODE_ENV=production pnpm test --filter ...@verdaccio/e2e-cli-${{matrix.pkg}}
 
-  e2e-cli:
+  e2e-cli-pnpm:
     needs: [prepare, build]
     strategy:
       fail-fast: true
       matrix:
-        pkg: [npm6, npm7, npm8, pnpm6, pnpm7, yarn1, yarn2,  yarn3, yarn4]
-    name:  E2E / ${{ matrix.pkg }} / ${{ matrix.os }}
+        pkg:
+          [
+            pnpm8,
+            pnpm9,
+            pnpm10,
+          ]
+        node: [18, 23]
+    name: ${{ matrix.pkg }}/ ubuntu-latest / ${{ matrix.node }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # tag=v3
-      - uses: actions/setup-node@2fddd8803e2f5c9604345a0b591c3020ee971a93 # tag=v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install dependencies with a custom registry version ${{ inputs.node-version }}
+        uses: ./.github/actions/install-app-node
         with:
-          node-version-file: '.nvmrc'
-      - name: Install pnpm
-        run: npm i pnpm@6.32.15 -g
-      - uses: actions/cache@fd5de65bc895cf536527842281bea11763fefd77 # tag=v3
-        with:
-          path: ~/.pnpm-store
-          key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-      - name: Install
-        run: pnpm recursive install --offline --frozen-lockfile --reporter=silence --ignore-scripts --registry http://localhost:4873
-      - uses: actions/cache@fd5de65bc895cf536527842281bea11763fefd77 # tag=v3
-        with:
-          path: ./packages/
-          key: pkg-${{ hashFiles('pnpm-lock.yaml') }}
-      - uses: actions/cache@fd5de65bc895cf536527842281bea11763fefd77 # tag=v3
-        with:
-          path: ./test/
-          key: test-${{ hashFiles('pnpm-lock.yaml') }}      
+          node-version: ${{ inputs.node_version }}
+          reporter: 'default'
+          loglevel: 'debug'
+      - name: Restore cache pnpm store
+        uses: ./.github/actions/cache-packages
       - name: Test CLI
         run: NODE_ENV=production pnpm test --filter ...@verdaccio/e2e-cli-${{matrix.pkg}}
+  e2e-cli-yarn:
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg:
+          [
+            yarn1,
+            yarn2,
+            yarn3,
+            yarn4
+          ]
+        node: [18, 23]
+    name: ${{ matrix.pkg }}/ ubuntu-latest / ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install dependencies with a custom registry version ${{ inputs.node-version }}
+        uses: ./.github/actions/install-app-node
+        with:
+          node-version: ${{ inputs.node_version }}
+          reporter: 'default'
+          loglevel: 'debug'
+      - name: Restore cache pnpm store
+        uses: ./.github/actions/cache-packages
+      - name: Test CLI
+        run: NODE_ENV=production pnpm test --filter ...@verdaccio/e2e-cli-${{matrix.pkg}}
+

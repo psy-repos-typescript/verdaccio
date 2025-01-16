@@ -6,7 +6,8 @@
     "visit-home-page": "Visit homepage",
     "open-an-issue": "Open an issue",
     "download-tarball": "Download tarball",
-    "raw": "Raw Manifest"
+    "raw": "View manifest",
+    "raw-title": "Manifest of {{package}}"
   },
   "dialog": {
     "registry-info": {
@@ -52,11 +53,14 @@
   },
   "versions": {
     "current-tags": "Current Tags",
-    "version-history": "Version history",
-    "not-available": "Not available"
+    "version-history": "Version History",
+    "not-available": "Not available",
+    "deprecated": "Deprecated",
+    "search.placeholder": "Search for a version by semver range, e.g., ^1.0.0.",
+    "hide-deprecated": "All deprecated versions are hidden by global configuration"
   },
   "package": {
-    "published-on": "Published on {{time}} •",
+    "published-on": "Published {{time}}",
     "version": "v{{version}}",
     "visit-home-page": "Visit homepage",
     "homepage": "Homepage",
@@ -68,7 +72,8 @@
   },
   "dependencies": {
     "has-no-dependencies": "{{package}} has no dependencies.",
-    "dependency-block": "{{package}}@{{version}}"
+    "dependency-block": "{{package}}: {{version}}",
+    "dependency-block-bundle": "{{package}}"
   },
   "form": {
     "username": "Username",
@@ -80,14 +85,14 @@
   },
   "form-validation": {
     "required-field": "This field is required",
-    "required-min-length": "This field required the min length of {{length}}",
+    "required-min-length": "This field required with a minimum length of {{length}}",
     "unable-to-sign-in": "Unable to sign in",
     "username-or-password-cant-be-empty": "Username or password can't be empty!"
   },
   "help": {
     "title": "No Package Published Yet.",
     "sub-title": "To publish your first package just:",
-    "first-step": "1. Login",
+    "first-step": "1. Create user",
     "first-step-command-line": "npm adduser --registry {{registryUrl}}",
     "second-step": "2. Publish",
     "second-step-command-line": "npm publish --registry {{registryUrl}}",
@@ -96,16 +101,14 @@
   "sidebar": {
     "detail": {
       "latest-version": "Latest v{{version}}",
-      "version": "v{{version}}"
+      "version": "v{{version}}",
+      "published": "Published"
     },
     "installation": {
       "title": "Installation",
-      "install-using-yarn": "Install using yarn",
-      "install-using-yarn-command": "yarn add {{packageName}}",
-      "install-using-npm": "Install using npm",
-      "install-using-npm-command": "npm install {{packageName}}",
-      "install-using-pnpm": "Install using pnpm",
-      "install-using-pnpm-command": "pnpm install {{packageName}}"
+      "latest": "latest version",
+      "global": "global package",
+      "yarnModern": "yarn modern syntax"
     },
     "repository": {
       "title": "Repository"
@@ -114,10 +117,13 @@
       "title": "Author"
     },
     "distribution": {
-      "title": "Latest Distribution",
+      "title": "Distribution",
       "license": "License",
       "size": "Size",
-      "file-count": "file count"
+      "file-count": "File Count"
+    },
+    "keywords": {
+      "title": "Keywords"
     },
     "maintainers": {
       "title": "Maintainers"
@@ -126,8 +132,10 @@
       "title": "Contributors"
     },
     "engines": {
-      "npm-version": "NPM Version",
-      "node-js": "NODE JS"
+      "npm-version": "Npm Version",
+      "pnpm-version": "Pnpm Version",
+      "yarn-version": "Yarn Version",
+      "node-js": "Node.js"
     }
   },
   "footer": {
@@ -146,8 +154,10 @@
   "error": {
     "unspecific": "Something went wrong.",
     "404": {
-      "page-not-found": "404 - Page not found",
       "sorry-we-could-not-find-it": "Sorry, we couldn't find it..."
+    },
+    "401": {
+      "sorry-no-access": "Sorry, you need credentials access to see this page."
     },
     "app-context-not-correct-used": "The app context was not used correctly",
     "theme-context-not-correct-used": "The theme context was not used correctly",
@@ -159,6 +169,7 @@
     "japanese": "Japanese",
     "portuguese": "Portuguese",
     "spanish": "Spanish",
+    "irish": "Irish",
     "german": "German",
     "italian": "Italian",
     "french": "French",
@@ -171,7 +182,9 @@
   },
   "flag": {
     "austria": "Austria",
+    "australia": "Australia",
     "brazil": "Brazil",
+    "canada": "Canada",
     "spain": "Spain",
     "nicaragua": "Nicaragua",
     "india": "India",

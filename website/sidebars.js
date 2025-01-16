@@ -1,110 +1,107 @@
 // @ts-check
-/**
- * Creating a sidebar enables you to:
- - create an ordered group of docs
- - render a sidebar for each doc of that group
- - provide next/previous navigation
-
- The sidebars can be generated from the filesystem, or explicitly defined here.
-
- Create as many sidebars as you want.
- */
-
 module.exports = {
   // By default, Docusaurus generates a sidebar from the docs folder structure
   docs: [
     {
-      type: "category",
-      label: "Introduction",
+      type: 'category',
+      label: 'Introduction',
       items: [
-        "what-is-verdaccio",
-        "installation",
-        "cli",
+        'installation',
+        'what-is-verdaccio',
+        'cli',
         {
-          type: "category",
-          label: "Setting up Verdaccio",
-          items: ["cli-registry", "setup-npm", "setup-yarn", "setup-pnpm"]
+          type: 'category',
+          label: 'Setting up Verdaccio',
+          items: [
+            'cli-registry',
+            'setup-npm',
+            'setup-yarn',
+            'setup-pnpm',
+            'setup-deno',
+            'setup-bun',
+          ],
         },
-        "who-is-using",
-        "best",
-        "docker",
-        "protect-your-dependencies",
-        "e2e",
-        "verdaccio-programmatically",
-        "security-policy",
-        "logo",        
+        'who-is-using',
+        'best',
+        'docker',
+        'protect-your-dependencies',
+        'e2e',
+        'verdaccio-programmatically',
+        'security-policy',
+        'logo',
+        'third-party',
         {
-          type: "category",
-          label: "Uses Cases",
-          items: ["caching", "github-actions", "linking-remote-registry"]
+          type: 'category',
+          label: 'Use Cases',
+          items: ['caching', 'linking-remote-registry'],
         },
-        {
-          type: "category",
-          label: "Talks & Articles",
-          items: ["articles", "talks"]
-        },
-      ]
+        'articles',
+      ],
     },
     {
-      type: "category",
-      label: "Features",
+      type: 'category',
+      label: 'Features',
       items: [
-        "configuration",
-        "uplinks",
-        "packages",
-        "authentication",
-        "notifications",
-        "logger",
-        "webui"
-      ]
+        'configuration',
+        'uplinks',
+        'packages',
+        'authentication',
+        'notifications',
+        'logger',
+        {
+          type: 'category',
+          label: 'User Interface',
+          items: ['webui', 'ui-components'],
+        },
+      ],
     },
     {
-      type: "category",
-      label: "Server",
+      type: 'category',
+      label: 'Server',
+      items: ['server-configuration', 'reverse-proxy', 'ssl', 'windows', 'iss-server'],
+    },
+    {
+      type: 'category',
+      label: 'Development',
       items: [
-        "server-configuration",
-        "reverse-proxy",
-        "ssl",
-        "windows",
-        "iss-server"
-      ]
+        {
+          type: 'category',
+          label: 'Plugins',
+          items: [
+            'plugins',
+            'plugin-generator',
+            'plugin-auth',
+            'plugin-middleware',
+            'plugin-storage',
+            'plugin-theme',
+            'plugin-filter',
+            {
+              type: 'link',
+              label: 'Search for Plugins & Tools',
+              href: '/dev/plugins-search',
+            },
+          ],
+        },
+        'node-api',
+      ],
     },
     {
-      type: "category",
-      label: "Development",
+      type: 'category',
+      label: 'DevOps',
       items: [
-        "plugins",
-        "dev-plugins",
+        'kubernetes',
+        'ci',
         {
-          type: "category",
-          label: "Dev Guides",
-          items: ["plugin-generator", "plugin-auth", "plugin-middleware", "plugin-storage"]
+          type: 'category',
+          label: 'Cloud',
+          items: ['amazon'],
         },
-        "node-api"
-      ]
+        {
+          type: 'category',
+          label: 'Tools',
+          items: ['ansible', 'puppet', 'chef'],
+        },
+      ],
     },
-    {
-      type: "category",
-      label: "DevOps",
-      items: [       
-        "kubernetes",
-        "ci",
-        {
-          type: "category",
-          label: "Cloud",
-          items: ["amazon"]
-        },
-        {
-          type: "category",
-          label: "Tools",
-          items: ["ansible", "puppet", "chef"]
-        },
-      ]
-    },
-    {
-      type: "category",
-      label: "Guides",
-      items: ["aws"]
-    }
-  ]
+  ],
 };
