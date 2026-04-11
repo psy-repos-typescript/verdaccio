@@ -30,7 +30,8 @@ jobs:
       github.event.pull_request.draft == false &&
       github.actor != 'renovate[bot]' &&
       github.actor != 'dependabot[bot]' &&
-      github.head_ref != 'changeset-release/master'
+      github.head_ref != 'changeset-release/master' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip changeset')
     runs-on: ubuntu-latest
     name: Changeset file check
     permissions:
@@ -222,13 +223,6 @@ jobs:
     if: ${{ github.event_name == 'pull_request' && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     name: E2E UI
-    services:
-      verdaccio:
-        image: verdaccio/verdaccio:6
-        ports:
-          - 4873:4873
-        env:
-          NODE_ENV: production
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Read Node version from .nvmrc
@@ -249,13 +243,54 @@ jobs:
             packages/plugins/ui-theme/static
           key: ci-build-${{ github.sha }}-node-24
           fail-on-cache-miss: true
-      - name: Test UI
-        run: pnpm test:e2e:ui
+      # The shared install-app-node action runs `pnpm install --ignore-scripts`,
+      # so cypress's postinstall (which downloads the test runner binary) is
+      # suppressed. Cache the binary across runs and only invoke `cypress
+      # install` on a cache miss — the version is pinned by the cypress entry
+      # in pnpm-lock.yaml, so this never pulls anything that isn't already
+      # locked.
+      - name: Cache Cypress binary
+        id: cypress-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/Cypress
+          key: cypress-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            cypress-${{ runner.os }}-
+      - name: Install Cypress binary
+        if: steps.cypress-cache.outputs.cache-hit != 'true'
+        run: pnpm exec cypress install
+      - name: Start Verdaccio
+        run: |
+          nohup node packages/verdaccio/bin/verdaccio --config ./scripts/e2e-ui-config.yaml > verdaccio.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -s http://localhost:4873/-/ping && break
+            sleep 1
+          done
+      - name: Create test user (for signin suite)
+        run: |
+          curl -s -X PUT -H "Content-Type: application/json" \
+            -d '{"name":"test","password":"test","_id":"org.couchdb.user:test","type":"user","roles":[]}' \
+            http://localhost:4873/-/user/org.couchdb.user:test
+      - name: Run Cypress
+        run: pnpm e2e:ui:run
+        env:
+          VERDACCIO_URL: http://localhost:4873
+      - name: Show Verdaccio logs
+        if: always()
+        run: cat verdaccio.log 2>/dev/null || echo "No log file found"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: failure()
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()
         with:
-          name: videos
-          path: /home/runner/work/verdaccio/verdaccio/e2e/ui/cypress/videos
+          name: cypress-videos
+          path: cypress/videos
+          if-no-files-found: ignore
   changeset-validation:
     needs: [test, e2e-cli, e2e-ui]
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && always() && !failure() && !cancelled() }}
