@@ -121,7 +121,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install dependencies
-        uses: ./.github/actions/install-app-node
+        uses: ./.github/actions/install-app
         with:
           node-version: ${{ matrix.node_version }}
       - name: Restore build artifacts
@@ -167,13 +167,8 @@ jobs:
           - deno
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Read Node version from .nvmrc
-        id: nvmrc
-        run: echo "node-version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
-        uses: ./.github/actions/install-app-node
-        with:
-          node-version: ${{ steps.nvmrc.outputs.node-version }}
+        uses: ./.github/actions/install-app
       - name: Setup Bun
         if: startsWith(matrix.pm, 'bun')
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -210,13 +205,8 @@ jobs:
     name: E2E UI
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Read Node version from .nvmrc
-        id: nvmrc
-        run: echo "node-version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
-        uses: ./.github/actions/install-app-node
-        with:
-          node-version: ${{ steps.nvmrc.outputs.node-version }}
+        uses: ./.github/actions/install-app
       - name: Restore build artifacts
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
@@ -228,7 +218,7 @@ jobs:
             packages/plugins/ui-theme/static
           key: ci-build-${{ github.sha }}-node-24
           fail-on-cache-miss: true
-      # The shared install-app-node action runs `pnpm install --ignore-scripts`,
+      # The shared install-app action runs `pnpm install --ignore-scripts`,
       # so cypress's postinstall (which downloads the test runner binary) is
       # suppressed. Cache the binary across runs and only invoke `cypress
       # install` on a cache miss — the version is pinned by the cypress entry
@@ -283,13 +273,8 @@ jobs:
     name: Changeset validation
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Read Node version from .nvmrc
-        id: nvmrc
-        run: echo "node-version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
-        uses: ./.github/actions/install-app-node
-        with:
-          node-version: ${{ steps.nvmrc.outputs.node-version }}
+        uses: ./.github/actions/install-app
       - name: Run changeset version
         run: pnpm ci:version:changeset
   codeql:
