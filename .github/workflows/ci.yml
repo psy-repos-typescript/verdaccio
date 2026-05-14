@@ -229,9 +229,7 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: ~/.cache/Cypress
-          key: cypress-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            cypress-${{ runner.os }}-
+          key: cypress-${{ runner.os }}-${{ github.head_ref || github.ref_name }}-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install Cypress binary
         if: steps.cypress-cache.outputs.cache-hit != 'true'
         run: pnpm exec cypress install
@@ -316,7 +314,7 @@ jobs:
       - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/.pnpm-store
-          key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          key: pnpm-${{ github.ref_name }}-${{ hashFiles('pnpm-lock.yaml') }}
       - name: set store
         run: |
           pnpm config set store-dir ~/.pnpm-store
