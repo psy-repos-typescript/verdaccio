@@ -126,7 +126,7 @@
     "changeset": "changeset",
     "changeset:check": "changeset status --since-master",
     "ci:version": "run-s ci:version:changeset ci:version:install",
-    "ci:version:install": "pnpm install --frozen-lockfile=false",
+    "ci:version:install": "pnpm install --frozen-lockfile=false --prefer-online",
     "ci:version:changeset": "changeset version",
     "ci:publish": "changeset publish",
     "ts:ref": "update-ts-references --discardComments --rootConfigName tsconfig.base.json",
