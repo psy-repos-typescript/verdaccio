@@ -25,3 +25,5 @@ minimumReleaseAgeExclude:
   - '@verdaccio-scope/*'
   - 'verdaccio-*'
 saveExact: true
+ignoreScripts: true
+preferFrozenLockfile: true
